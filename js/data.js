@@ -345,6 +345,62 @@ const Storage = {
     localStorage.removeItem("obdip_current_user");
   },
 
+  /** Retorna notificacoes do usuario */
+  getNotificationsByUser(userId) {
+    return JSON.parse(localStorage.getItem(`obdip_notifications_${userId}`) || "[]");
+  },
+
+  /** Salva notificacoes do usuario */
+  saveNotificationsByUser(userId, notifications) {
+    localStorage.setItem(`obdip_notifications_${userId}`, JSON.stringify(notifications));
+  },
+
+  /** Adiciona uma notificacao ao usuario */
+  addNotification(userId, notification) {
+    const notifications = this.getNotificationsByUser(userId);
+    notifications.unshift(notification);
+    this.saveNotificationsByUser(userId, notifications);
+    return notification;
+  },
+
+  /** Retorna todos os documentos cadastrados */
+  getDocuments() {
+    return JSON.parse(localStorage.getItem("obdip_documents") || "[]");
+  },
+
+  /** Salva todos os documentos */
+  saveDocuments(documents) {
+    localStorage.setItem("obdip_documents", JSON.stringify(documents));
+  },
+
+  /** Adiciona um documento */
+  addDocument(document) {
+    const documents = this.getDocuments();
+    documents.push(document);
+    this.saveDocuments(documents);
+    return document;
+  },
+
+  /** Atualiza um documento existente */
+  updateDocument(documentId, updates) {
+    const documents = this.getDocuments();
+    const index = documents.findIndex((item) => item.id === documentId);
+    if (index === -1) return null;
+
+    documents[index] = {
+      ...documents[index],
+      ...updates,
+      atualizadoEm: new Date().toISOString()
+    };
+    this.saveDocuments(documents);
+    return documents[index];
+  },
+
+  /** Lista documentos de um usuario */
+  getDocumentsByUser(userId) {
+    return this.getDocuments().filter((item) => item.userId === userId);
+  },
+
   /** Retorna respostas salvas de um simulado */
   getRespostas(simuladoId, userId) {
     const key = `obdip_respostas_${simuladoId}_${userId}`;
@@ -441,12 +497,23 @@ function getSimuladoById(id) {
  * @param {string} turma — ex: "EM", "EF", "ES", "Senior", "Desempregado"
  * @returns {Array}
  */
+function getTurmaAliases(turma) {
+  const aliasMap = {
+    EFI: ["EFI", "EF"],
+    EFII: ["EFII", "EF"],
+    EF: ["EF", "EFI", "EFII"],
+    EM: ["EM"],
+    ES: ["ES"],
+    Senior: ["Senior"],
+    NemNem: ["NemNem", "Desempregado"],
+    Desempregado: ["Desempregado", "NemNem"]
+  };
+
+  return aliasMap[turma] || [turma];
+}
+
 function getSimuladosByTurma(turma) {
-  const turmaAliases = turma === "NemNem"
-    ? ["NemNem", "Desempregado"]
-    : turma === "Desempregado"
-      ? ["Desempregado", "NemNem"]
-      : [turma];
+  const turmaAliases = getTurmaAliases(turma);
   return SIMULADOS_DATA.filter(
     s => s.status === "publicado" && (turmaAliases.some((alias) => s.turmas.includes(alias)) || s.turmas.includes("Todos"))
   );
@@ -458,11 +525,7 @@ function getSimuladosByTurma(turma) {
  * @returns {Array}
  */
 function getEbooksByTurma(turma) {
-  const turmaAliases = turma === "NemNem"
-    ? ["NemNem", "Desempregado"]
-    : turma === "Desempregado"
-      ? ["Desempregado", "NemNem"]
-      : [turma];
+  const turmaAliases = getTurmaAliases(turma);
   return EBOOKS_DATA.filter(e => turmaAliases.some((alias) => e.turmas.includes(alias)) || e.turmas.includes("Todos"));
 }
 
@@ -540,6 +603,69 @@ function calcularResultado(simulado, respostas) {
     ];
     Storage.saveUsers(demoUsers);
   }
+
+  if (!Storage.getDocuments().length) {
+    const demoDocuments = [
+      {
+        id: "doc-001",
+        userId: "user-001",
+        tipo: "matricula",
+        nome: "Comprovante de matricula",
+        status: "validado",
+        referencia: "PDF demo disponivel para demonstracao no admin.",
+        observacoes: "Documento validado pela equipe academica.",
+        origem: "matricula",
+        arquivoNome: "demo-matricula-obdip.pdf",
+        arquivoTipo: "application/pdf",
+        arquivoUrl: "./assets/demo-matricula-obdip.pdf",
+        enviadoEm: "2025-08-02T10:00:00Z",
+        atualizadoEm: "2025-08-03T09:15:00Z"
+      },
+      {
+        id: "doc-002",
+        userId: "user-002",
+        tipo: "matricula",
+        nome: "Comprovante de matricula",
+        status: "pendente",
+        referencia: "https://obdip.local/docs/joao-matricula.pdf",
+        observacoes: "Aguardando conferencia do documento escolar.",
+        origem: "matricula",
+        enviadoEm: "2025-08-06T11:20:00Z",
+        atualizadoEm: "2025-08-06T11:20:00Z"
+      },
+      {
+        id: "doc-003",
+        userId: "user-002",
+        tipo: "autorizacao",
+        nome: "Autorizacao do responsavel",
+        status: "em_analise",
+        referencia: "Responsavel informado no cadastro demo.",
+        observacoes: "Conferir assinatura e telefone do responsavel.",
+        origem: "matricula",
+        enviadoEm: "2025-08-06T11:25:00Z",
+        atualizadoEm: "2025-08-06T11:25:00Z"
+      }
+    ];
+
+    Storage.saveDocuments(demoDocuments);
+  }
+})();
+
+(function ensureDemoPdfDocument() {
+  const documents = Storage.getDocuments();
+  if (!documents.length || documents.some((item) => item.arquivoDataUrl || item.arquivoUrl)) {
+    return;
+  }
+
+  documents[0] = {
+    ...documents[0],
+    referencia: "PDF demo disponivel para demonstracao no admin.",
+    arquivoNome: "demo-matricula-obdip.pdf",
+    arquivoTipo: "application/pdf",
+    arquivoUrl: "./assets/demo-matricula-obdip.pdf",
+    atualizadoEm: new Date().toISOString()
+  };
+  Storage.saveDocuments(documents);
 })();
 
 export {

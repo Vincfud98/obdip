@@ -17,6 +17,8 @@ export function getInitials(name = "") {
 
 export function formatSerieLabel(serie = "") {
   const labels = {
+    EFI: "Fundamental I (4o e 5o ano)",
+    EFII: "Fundamental II (6o ao 9o ano)",
     EF: "Ensino Fundamental",
     EM: "Ensino Medio",
     ES: "Ensino Superior",

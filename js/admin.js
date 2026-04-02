@@ -31,6 +31,13 @@ function renderIcon(name) {
         <path d="M5 20a7 7 0 0114 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
       </svg>
     `,
+    documents: `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M8 3.5h6l4 4V20a1.5 1.5 0 0 1-1.5 1.5h-8A1.5 1.5 0 0 1 7 20V5A1.5 1.5 0 0 1 8.5 3.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M14 3.5V8h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M9.5 12h5M9.5 15.5h5M9.5 19h3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    `,
     search: `
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
@@ -154,7 +161,8 @@ function renderSidebar(section) {
     { key: "simulados", label: "Simulados", icon: "simulados" },
     { key: "ranking", label: "Ranking", icon: "ranking" },
     { key: "grupos", label: "Grupos", icon: "groups" },
-    { key: "usuarios", label: "Usuarios", icon: "users" }
+    { key: "usuarios", label: "Usuarios", icon: "users" },
+    { key: "documentos", label: "Documentos", icon: "documents" }
   ];
 
   return `
@@ -210,7 +218,8 @@ function renderTopHeader(section, theme) {
     simulados: { title: "Gerenciar simulados", description: "Criacao, importacao, publicacao e biblioteca de simulados." },
     ranking: { title: "Ranking", description: "Ordenacao por simulado com modal de desempenho individual." },
     grupos: { title: "Grupos de alunos", description: "Gerencie os grupos da plataforma e acompanhe a distribuicao da base." },
-    usuarios: { title: "Gerenciar usuarios", description: "Permissao de email, suspensao, banimento, troca de senha e perfil." }
+    usuarios: { title: "Gerenciar usuarios", description: "Permissao de email, suspensao, banimento, troca de senha e perfil." },
+    documentos: { title: "Documentos", description: "Centralize comprovantes, autorizacoes e validacoes dos participantes." }
   };
 
   const current = titles[section] || titles.home;
@@ -289,7 +298,7 @@ function renderHero(analytics) {
         <div class="admin-executive-item">Home com estatisticas e leitura analitica da plataforma.</div>
         <div class="admin-executive-item">Simulados separados em pagina propria para operacao editorial.</div>
         <div class="admin-executive-item">Ranking em pagina dedicada do admin, fora do painel do aluno.</div>
-        <div class="admin-executive-item">Gestao de grupos com EF, EM, ES, Nem nem e Senior.</div>
+        <div class="admin-executive-item">Gestao de grupos com Fundamental I, Fundamental II, Ensino Medio e compatibilidade com conteudo legado.</div>
         <div class="admin-executive-item">Usuarios em pagina independente com acoes administrativas.</div>
       </section>
     </section>
@@ -489,7 +498,7 @@ function renderSimuladosAdmin(simulados) {
               <div class="admin-ga-list-top">
                 <div>
                   <div class="tag-row">
-                    <span class="badge badge-primary">${simulado.turmas.join(", ")}</span>
+                    <span class="badge badge-primary">${simulado.turmas.map(formatSerieLabel).join(", ")}</span>
                     <span class="badge ${
                       simulado.status === "publicado"
                         ? "badge-success"
@@ -716,7 +725,7 @@ function renderGroupsPage(groups, users) {
             <h3>Grupos cadastrados</h3>
             <p class="muted-copy">Separacao da plataforma por grupos de alunos.</p>
           </div>
-          ${renderCardTools(["EF", "EM", "ES", "Senior", "Nem nem"])}
+          ${renderCardTools(["Fundamental I", "Fundamental II", "Ensino Medio", "Legado EF"])}
         </div>
         <div class="card-body admin-ga-groups-grid">
           ${groups
@@ -744,7 +753,7 @@ function renderGroupsPage(groups, users) {
         <div class="card-header admin-lte-card-header">
           <div>
             <h3>Adicionar grupo</h3>
-            <p class="muted-copy">Cadastre novos grupos como EF, EM, ES, Nem nem ou Senior.</p>
+            <p class="muted-copy">Cadastre novos grupos conforme as faixas oficiais da OBDIP 2026.</p>
           </div>
           ${renderCardTools(["Cadastro"])}
         </div>
@@ -752,16 +761,155 @@ function renderGroupsPage(groups, users) {
           <div class="inline-fields">
             <div class="form-group">
               <label class="form-label" for="group-code">Codigo</label>
-              <input id="group-code" class="form-control" name="code" placeholder="Ex.: EF ou NN" required>
+              <input id="group-code" class="form-control" name="code" placeholder="Ex.: EFI ou EM" required>
             </div>
             <div class="form-group">
               <label class="form-label" for="group-name">Nome do grupo</label>
-              <input id="group-name" class="form-control" name="name" placeholder="Ex.: Nem nem" required>
+              <input id="group-name" class="form-control" name="name" placeholder="Ex.: Fundamental I (4o e 5o ano)" required>
             </div>
           </div>
           <button class="btn btn-primary" type="submit">Adicionar grupo</button>
         </form>
       </article>
+    </section>
+  `;
+}
+
+function getDocumentStatusMeta(status) {
+  const meta = {
+    pendente: { label: "Pendente", badge: "badge-warning" },
+    em_analise: { label: "Em analise", badge: "badge-primary" },
+    validado: { label: "Validado", badge: "badge-success" },
+    reprovado: { label: "Reprovado", badge: "badge-error" }
+  };
+
+  return meta[status] || { label: status || "Sem status", badge: "badge-muted" };
+}
+
+function getDocumentTypeLabel(tipo) {
+  const labels = {
+    matricula: "Matricula",
+    autorizacao: "Autorizacao do responsavel",
+    identidade: "Documento de identificacao",
+    residencia: "Comprovante de residencia",
+    declaracao: "Declaracao escolar",
+    outro: "Outro"
+  };
+
+  return labels[tipo] || tipo;
+}
+
+function renderDocumentsPage(users, documents) {
+  const sortedDocuments = [...documents].sort(
+    (a, b) => new Date(b.atualizadoEm || b.enviadoEm || 0) - new Date(a.atualizadoEm || a.enviadoEm || 0)
+  );
+  const counters = {
+    total: documents.length,
+    pendente: documents.filter((item) => item.status === "pendente").length,
+    analise: documents.filter((item) => item.status === "em_analise").length,
+    validado: documents.filter((item) => item.status === "validado").length
+  };
+
+  return `
+    <section class="admin-ga-workspace-grid admin-lte-workspace-grid">
+      <article class="admin-ga-surface admin-lte-card-surface">
+        <div class="card-header admin-lte-card-header">
+          <div>
+            <h3>Resumo documental</h3>
+            <p class="muted-copy">Acompanhe os comprovantes recebidos dos alunos no processo de matricula da OBDIP 2026.</p>
+          </div>
+          ${renderCardTools(["Recebidos na matricula"])}
+        </div>
+        <div class="card-body admin-stack">
+          <div class="info-callout">
+            <strong>Como essa aba funciona</strong>
+            <p class="muted-copy">
+              Esta central registra os documentos recebidos dos estudantes e participantes durante a matricula.
+              O admin usa esta pagina para acompanhar pendencias, validar comprovantes e revisar autorizacoes.
+            </p>
+          </div>
+
+          <div class="admin-ga-pipeline">
+            <div class="admin-ga-pipeline-card">
+              <span>Total armazenado</span>
+              <strong>${counters.total}</strong>
+            </div>
+            <div class="admin-ga-pipeline-card">
+              <span>Pendentes</span>
+              <strong>${counters.pendente}</strong>
+            </div>
+            <div class="admin-ga-pipeline-card">
+              <span>Em analise</span>
+              <strong>${counters.analise}</strong>
+            </div>
+            <div class="admin-ga-pipeline-card">
+              <span>Validados</span>
+              <strong>${counters.validado}</strong>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="admin-ga-surface admin-lte-card-surface mt-6">
+      <div class="card-header admin-lte-card-header">
+        <div>
+          <h3>Biblioteca de documentos</h3>
+          <p class="muted-copy">Todos os comprovantes recebidos na matricula dos estudantes e participantes ficam centralizados aqui.</p>
+        </div>
+        ${renderCardTools([`${documents.length} documentos`])}
+      </div>
+      <div class="card-body admin-stack">
+        ${
+          !sortedDocuments.length
+            ? `
+              <div class="empty-state">
+                <strong>Nenhum documento armazenado</strong>
+                <p class="muted-copy">Assim que documentos forem cadastrados ou vinculados aos participantes, eles aparecerao aqui.</p>
+              </div>
+            `
+            : sortedDocuments
+                .map((document) => {
+                  const user = users.find((item) => item.id === document.userId);
+                  const statusMeta = getDocumentStatusMeta(document.status);
+
+                  return `
+                    <article class="admin-ga-list-card admin-lte-list-card">
+                      <div class="admin-ga-list-top">
+                        <div>
+                          <div class="tag-row">
+                            <span class="badge badge-primary">${getDocumentTypeLabel(document.tipo)}</span>
+                            <span class="badge ${statusMeta.badge}">${statusMeta.label}</span>
+                          </div>
+                          <h4 class="mt-4">${document.nome}</h4>
+                          <p class="muted-copy mt-2">${user?.nome || "Participante nao encontrado"} | ${formatSerieLabel(user?.serie || "Sem turma")}</p>
+                          <p class="muted-copy mt-2">${document.arquivoNome || document.referencia || "Sem referencia informada"}</p>
+                        </div>
+                        <div class="text-right">
+                          <span class="surface-eyebrow">${formatDateTime(document.atualizadoEm || document.enviadoEm)}</span>
+                        </div>
+                      </div>
+
+                      <div class="simulado-actions admin-lte-list-footer">
+                        <button class="btn btn-secondary btn-sm" type="button" data-document-action="visualizar" data-document-id="${document.id}">
+                          Visualizar
+                        </button>
+                        <button class="btn btn-secondary btn-sm" type="button" data-document-action="analise" data-document-id="${document.id}">
+                          Em analise
+                        </button>
+                        <button class="btn btn-secondary btn-sm" type="button" data-document-action="validar" data-document-id="${document.id}">
+                          Validar
+                        </button>
+                        <button class="btn btn-secondary btn-sm" type="button" data-document-action="reprovar" data-document-id="${document.id}">
+                          Reprovar
+                        </button>
+                      </div>
+                    </article>
+                  `;
+                })
+                .join("")
+        }
+      </div>
     </section>
   `;
 }
@@ -791,6 +939,7 @@ function renderUsersPage(users) {
                 </div>
                 <div class="user-actions">
                   <button class="btn btn-secondary btn-sm" type="button" data-user-action="perfil" data-user-id="${user.id}">Perfil</button>
+                  <button class="btn btn-secondary btn-sm" type="button" data-user-action="documentos" data-user-id="${user.id}">Documentos</button>
                   <button class="btn btn-secondary btn-sm" type="button" data-user-action="email" data-user-id="${user.id}">Permissao email</button>
                   <button class="btn btn-secondary btn-sm" type="button" data-user-action="suspender" data-user-id="${user.id}">Suspender</button>
                   <button class="btn btn-secondary btn-sm" type="button" data-user-action="banir" data-user-id="${user.id}">Banir</button>
@@ -887,7 +1036,7 @@ function mountCanvasCharts(root) {
 }
 
 export function renderAdminDashboard(root, data, handlers) {
-  const { users, simulados, historico = [], section, groups, rankingSimuladoId, ranking, theme = "light" } = data;
+  const { users, simulados, historico = [], documents = [], section, groups, rankingSimuladoId, ranking, theme = "light" } = data;
   const rankingSimulado = simulados.find((item) => item.id === rankingSimuladoId) || simulados[0] || null;
   const analytics = buildAnalytics(users, simulados, historico, groups);
   const activeGroups = groups.filter((group) => group.active);
@@ -897,7 +1046,8 @@ export function renderAdminDashboard(root, data, handlers) {
     simulados: renderSimuladosPage(simulados, activeGroups.length ? activeGroups : groups),
     ranking: renderRankingPage(simulados, rankingSimulado, ranking),
     grupos: renderGroupsPage(groups, users),
-    usuarios: renderUsersPage(users)
+    usuarios: renderUsersPage(users),
+    documentos: renderDocumentsPage(users, documents)
   };
 
   root.innerHTML = `
@@ -965,6 +1115,12 @@ export function renderAdminDashboard(root, data, handlers) {
 
   root.querySelectorAll("[data-group-action]").forEach((button) => {
     button.addEventListener("click", () => handlers.onGroupAction(button.dataset.groupAction, button.dataset.groupCode));
+  });
+
+  root.querySelectorAll("[data-document-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      handlers.onDocumentAction(button.dataset.documentAction, button.dataset.documentId);
+    });
   });
 
   root.querySelectorAll("[data-simulado-action]").forEach((button) => {

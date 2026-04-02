@@ -11,7 +11,7 @@ import { renderLanding } from "./auth.js";
 import { renderStudentDashboard } from "./dashboard.js";
 import { renderAdminDashboard } from "./admin.js";
 import { mountSimulado } from "./simulado.js";
-import { formatDateTime, formatSerieLabel, openModal, showToast } from "./ui.js";
+import { closeModal, formatDateTime, formatSerieLabel, openModal, showToast } from "./ui.js";
 
 const roots = {
   landing: document.querySelector("#landing-view"),
@@ -43,18 +43,39 @@ function setAdminTheme(theme) {
 }
 
 let simuladoCleanup = null;
+const MAX_DOCUMENT_PDF_SIZE = 2.5 * 1024 * 1024;
+const DOCUMENT_REJECTION_REASONS = [
+  { value: "ilegivel", label: "PDF ilegivel ou incompleto" },
+  { value: "invalido", label: "Documento invalido para a matricula" },
+  { value: "divergencia", label: "Dados divergentes do cadastro" },
+  { value: "assinatura", label: "Falta assinatura ou confirmacao" },
+  { value: "outro", label: "Outro motivo" }
+];
 
 const DEFAULT_ADMIN_GROUPS = [
-  { code: "EF", name: "Ensino Fundamental", active: true },
+  { code: "EFI", name: "Fundamental I (4o e 5o ano)", active: true },
+  { code: "EFII", name: "Fundamental II (6o ao 9o ano)", active: true },
   { code: "EM", name: "Ensino Medio", active: true },
-  { code: "ES", name: "Ensino Superior", active: true },
-  { code: "NemNem", name: "Nem nem", active: true },
-  { code: "Senior", name: "Senior", active: true }
+  { code: "EF", name: "Conteudo legado de Ensino Fundamental", active: true }
 ];
 
 function getAdminGroups() {
   const saved = JSON.parse(localStorage.getItem("obdip_admin_groups") || "null");
-  return Array.isArray(saved) && saved.length ? saved : DEFAULT_ADMIN_GROUPS;
+  if (!Array.isArray(saved) || !saved.length) {
+    return DEFAULT_ADMIN_GROUPS;
+  }
+
+  const savedCodes = new Set(saved.map((group) => group.code));
+  const isLegacyDefault =
+    savedCodes.has("EF") &&
+    savedCodes.has("EM") &&
+    savedCodes.has("ES") &&
+    savedCodes.has("NemNem") &&
+    savedCodes.has("Senior") &&
+    !savedCodes.has("EFI") &&
+    !savedCodes.has("EFII");
+
+  return isLegacyDefault ? DEFAULT_ADMIN_GROUPS : saved;
 }
 
 function saveAdminGroups(groups) {
@@ -100,6 +121,13 @@ function getLatestHistorico(userId) {
 
 function getNotifications(user, simulados, resultados) {
   const latest = getLatestHistorico(user.id);
+  const inboxNotifications = Storage.getNotificationsByUser(user.id).map((item) => ({
+    id: item.id,
+    tipo: item.tipo || "warning",
+    titulo: item.titulo,
+    texto: item.texto,
+    tempo: formatDateTime(item.dataHora)
+  }));
   const items = [
     {
       id: "notif-1",
@@ -139,12 +167,14 @@ function getNotifications(user, simulados, resultados) {
     });
   }
 
-  return items;
+  return [...inboxNotifications, ...items];
 }
 
 function getStudentData(user) {
   const simulados = getSimuladosByTurma(user.serie);
   const ebooks = getEbooksByTurma(user.serie);
+  const documents = Storage.getDocumentsByUser(user.id)
+    .sort((a, b) => new Date(b.atualizadoEm || b.enviadoEm || 0) - new Date(a.atualizadoEm || a.enviadoEm || 0));
   const resultados = simulados.map((simulado) => Storage.getResultado(simulado.id, user.id));
   const selectedResultadoId =
     state.selectedResultadoId ||
@@ -155,6 +185,7 @@ function getStudentData(user) {
   const certificates = getCertificates(user, resultados);
 
   return {
+    documents,
     ebooks,
     simulados,
     resultados,
@@ -167,6 +198,8 @@ function getStudentData(user) {
 }
 
 function openStudentProfile(user) {
+  const hasGuardianInfo = user.responsavelNome || user.responsavelEmail || user.responsavelTelefone;
+
   openModal({
     title: "Perfil do aluno",
     body: `
@@ -182,7 +215,14 @@ function openStudentProfile(user) {
           <p class="muted-copy"><strong>Nome:</strong> ${user.nome}</p>
           <p class="muted-copy"><strong>Email:</strong> ${user.email}</p>
           <p class="muted-copy"><strong>Escola:</strong> ${user.escola}</p>
-          <p class="muted-copy"><strong>Serie:</strong> ${user.serie}</p>
+          <p class="muted-copy"><strong>Categoria:</strong> ${formatSerieLabel(user.serie)}</p>
+        </div>
+        <div class="info-callout">
+          <strong>Responsavel</strong>
+          <p class="muted-copy"><strong>Status:</strong> ${user.menor ? "Cadastro com responsavel" : "Nao obrigatorio"}</p>
+          <p class="muted-copy"><strong>Nome:</strong> ${hasGuardianInfo ? user.responsavelNome || "Nao informado" : "Nao informado"}</p>
+          <p class="muted-copy"><strong>Email:</strong> ${hasGuardianInfo ? user.responsavelEmail || "Nao informado" : "Nao informado"}</p>
+          <p class="muted-copy"><strong>Telefone:</strong> ${hasGuardianInfo ? user.responsavelTelefone || "Nao informado" : "Nao informado"}</p>
         </div>
         <div class="info-callout">
           <strong>Certificados</strong>
@@ -256,10 +296,38 @@ function renderLandingView() {
         Storage.setCurrentUser(user);
         renderCurrentSession();
       },
-      onRegister: (payload) => {
+      onRegister: async (payload) => {
         if (!payload.nome || !payload.email || !payload.escola || !payload.serie) {
           showToast("Preencha todos os campos obrigatorios.", "error");
           return;
+        }
+
+        const registrationPdfError = validatePdfFile(payload.comprovanteMatriculaPdf, "Comprovante de matricula");
+        if (registrationPdfError) {
+          showToast(registrationPdfError, "error");
+          return;
+        }
+
+        const guardianRequired = ["EFI", "EFII"].includes(payload.serie) || payload.menor;
+        if (
+          guardianRequired &&
+          (
+            !payload.responsavelNome ||
+            !payload.responsavelEmail ||
+            !payload.responsavelTelefone ||
+            !payload.consentimentoResponsavel
+          )
+        ) {
+          showToast("Preencha os dados do responsavel e confirme a autorizacao.", "error");
+          return;
+        }
+
+        if (guardianRequired) {
+          const guardianPdfError = validatePdfFile(payload.autorizacaoResponsavelPdf, "Autorizacao do responsavel");
+          if (guardianPdfError) {
+            showToast(guardianPdfError, "error");
+            return;
+          }
         }
 
         const users = Storage.getUsers();
@@ -275,7 +343,11 @@ function renderLandingView() {
           email: payload.email,
           escola: payload.escola,
           serie: payload.serie,
-          menor: payload.menor,
+          menor: guardianRequired,
+          responsavelNome: guardianRequired ? payload.responsavelNome : "",
+          responsavelEmail: guardianRequired ? payload.responsavelEmail : "",
+          responsavelTelefone: guardianRequired ? payload.responsavelTelefone : "",
+          consentimentoResponsavel: guardianRequired ? payload.consentimentoResponsavel : false,
           role: "aluno",
           status: "ativo",
           criadoEm: new Date().toISOString()
@@ -283,6 +355,14 @@ function renderLandingView() {
 
         users.push(newUser);
         Storage.saveUsers(users);
+        try {
+          await storeEnrollmentDocuments(newUser, payload);
+        } catch (error) {
+          Storage.saveUsers(users.filter((item) => item.id !== newUser.id));
+          showToast("Nao foi possivel processar os PDFs enviados. Tente novamente.", "error");
+          return;
+        }
+        ensureRequiredDocumentsForUser(newUser);
         Storage.setCurrentUser(newUser);
         state.currentUser = newUser;
         state.paymentConfirmed = false;
@@ -321,6 +401,165 @@ function persistCurrentUser(updates) {
   Storage.saveUsers(users);
   state.currentUser = users[index];
   Storage.setCurrentUser(users[index]);
+}
+
+function buildRequiredDocumentsForUser(user) {
+  const now = new Date().toISOString();
+  const documents = [
+    {
+      id: `doc-${user.id}-matricula`,
+      userId: user.id,
+      tipo: "matricula",
+      nome: "Comprovante de matricula",
+      status: "pendente",
+      referencia: user.escola ? `Matricula vinculada a ${user.escola}.` : "Aguardando recebimento do comprovante de matricula.",
+      observacoes: "Documento recebido no processo de matricula do estudante.",
+      origem: "matricula",
+      enviadoEm: user.criadoEm || now,
+      atualizadoEm: user.criadoEm || now
+    }
+  ];
+
+  if (user.menor || user.responsavelNome || user.responsavelEmail || user.responsavelTelefone) {
+    documents.push({
+      id: `doc-${user.id}-autorizacao`,
+      userId: user.id,
+      tipo: "autorizacao",
+      nome: "Autorizacao do responsavel",
+      status: user.consentimentoResponsavel ? "em_analise" : "pendente",
+      referencia: user.responsavelNome
+        ? `Responsavel informado: ${user.responsavelNome}.`
+        : "Aguardando recebimento da autorizacao do responsavel.",
+      observacoes: "Documento recebido no processo de matricula para estudantes menores de idade.",
+      origem: "matricula",
+      enviadoEm: user.criadoEm || now,
+      atualizadoEm: user.criadoEm || now
+    });
+  }
+
+  return documents;
+}
+
+function hasUploadedFile(file) {
+  return Boolean(file && typeof file === "object" && file.name && file.size > 0);
+}
+
+function validatePdfFile(file, fieldLabel) {
+  if (!hasUploadedFile(file)) {
+    return `${fieldLabel}: envie um arquivo PDF.`;
+  }
+
+  const isPdfMime = file.type === "application/pdf";
+  const isPdfExtension = file.name.toLowerCase().endsWith(".pdf");
+  if (!isPdfMime && !isPdfExtension) {
+    return `${fieldLabel}: o arquivo precisa estar em PDF.`;
+  }
+
+  if (file.size > MAX_DOCUMENT_PDF_SIZE) {
+    return `${fieldLabel}: o PDF excede o limite de 2,5 MB.`;
+  }
+
+  return null;
+}
+
+function getRejectionReasonLabel(reasonCode) {
+  return DOCUMENT_REJECTION_REASONS.find((item) => item.value === reasonCode)?.label || reasonCode || "Motivo nao informado";
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Falha ao ler arquivo."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function storeEnrollmentDocuments(user, payload) {
+  const now = user.criadoEm || new Date().toISOString();
+  const matriculaPdf = payload.comprovanteMatriculaPdf;
+  const documentsToSave = [];
+
+  if (hasUploadedFile(matriculaPdf)) {
+    documentsToSave.push({
+      id: `doc-${user.id}-matricula`,
+      userId: user.id,
+      tipo: "matricula",
+      nome: "Comprovante de matricula",
+      status: "em_analise",
+      referencia: `PDF recebido na matricula: ${matriculaPdf.name}`,
+      observacoes: "Comprovante recebido no formulario de matricula.",
+      origem: "matricula",
+      arquivoNome: matriculaPdf.name,
+      arquivoTipo: matriculaPdf.type || "application/pdf",
+      arquivoTamanho: matriculaPdf.size,
+      arquivoDataUrl: await readFileAsDataUrl(matriculaPdf),
+      enviadoEm: now,
+      atualizadoEm: now
+    });
+  }
+
+  const autorizacaoPdf = payload.autorizacaoResponsavelPdf;
+  if (hasUploadedFile(autorizacaoPdf)) {
+    documentsToSave.push({
+      id: `doc-${user.id}-autorizacao`,
+      userId: user.id,
+      tipo: "autorizacao",
+      nome: "Autorizacao do responsavel",
+      status: "em_analise",
+      referencia: `PDF recebido na matricula: ${autorizacaoPdf.name}`,
+      observacoes: "Autorizacao do responsavel recebida no formulario de matricula.",
+      origem: "matricula",
+      arquivoNome: autorizacaoPdf.name,
+      arquivoTipo: autorizacaoPdf.type || "application/pdf",
+      arquivoTamanho: autorizacaoPdf.size,
+      arquivoDataUrl: await readFileAsDataUrl(autorizacaoPdf),
+      enviadoEm: now,
+      atualizadoEm: now
+    });
+  }
+
+  documentsToSave.forEach((document) => Storage.addDocument(document));
+}
+
+async function reuploadStudentDocument(user, documentId, file) {
+  const documentRecord = Storage.getDocuments().find((item) => item.id === documentId && item.userId === user.id);
+  if (!documentRecord) {
+    throw new Error("Documento nao encontrado.");
+  }
+
+  const fileError = validatePdfFile(file, documentRecord.nome);
+  if (fileError) {
+    throw new Error(fileError);
+  }
+
+  const dataUrl = await readFileAsDataUrl(file);
+  Storage.updateDocument(documentId, {
+    status: "em_analise",
+    referencia: `PDF reenviado pelo aluno: ${file.name}`,
+    observacoes: "Documento reenviado pelo aluno para nova analise.",
+    arquivoNome: file.name,
+    arquivoTipo: file.type || "application/pdf",
+    arquivoTamanho: file.size,
+    arquivoDataUrl: dataUrl,
+    rejectionReasonCode: "",
+    rejectionReasonText: ""
+  });
+}
+
+function ensureRequiredDocumentsForUser(user) {
+  if (!user?.id || user.role === "admin") return;
+
+  const existing = Storage.getDocumentsByUser(user.id);
+  const existingTypes = new Set(existing.map((item) => item.tipo));
+
+  buildRequiredDocumentsForUser(user)
+    .filter((document) => !existingTypes.has(document.tipo))
+    .forEach((document) => Storage.addDocument(document));
+}
+
+function syncRequiredDocumentsForUsers(users) {
+  users.forEach((user) => ensureRequiredDocumentsForUser(user));
 }
 
 function renderStudentView() {
@@ -424,6 +663,23 @@ function renderStudentView() {
         state.studentSection = "home";
         renderStudentView();
       },
+      onReuploadDocument: async (documentId, formData) => {
+        try {
+          await reuploadStudentDocument(user, documentId, formData.get("arquivo"));
+          Storage.addNotification(user.id, {
+            id: `notif-doc-reupload-${Date.now()}`,
+            tipo: "primary",
+            titulo: "Documento reenviado",
+            texto: "Recebemos seu novo PDF. A equipe OBDIP vai analisar o documento novamente.",
+            dataHora: new Date().toISOString()
+          });
+          showToast("Documento reenviado com sucesso.");
+          state.studentSection = "documentos";
+          renderStudentView();
+        } catch (error) {
+          showToast(error.message || "Nao foi possivel reenviar o documento.", "error");
+        }
+      },
       onToggleTheme: () => {
         setStudentTheme(state.studentTheme === "dark" ? "light" : "dark");
         renderStudentView();
@@ -446,6 +702,8 @@ function renderStudentView() {
 }
 
 function openAdminUserModal(user) {
+  const documents = Storage.getDocumentsByUser(user.id);
+
   openModal({
     title: `Perfil de ${user.nome}`,
     body: `
@@ -454,8 +712,10 @@ function openAdminUserModal(user) {
           <strong>Dados do formulario</strong>
           <p class="muted-copy"><strong>Email:</strong> ${user.email}</p>
           <p class="muted-copy"><strong>Escola:</strong> ${user.escola || "Nao informada"}</p>
-          <p class="muted-copy"><strong>Serie:</strong> ${user.serie || "Nao informada"}</p>
+          <p class="muted-copy"><strong>Categoria:</strong> ${formatSerieLabel(user.serie || "Nao informada")}</p>
           <p class="muted-copy"><strong>Status:</strong> ${user.status || "ativo"}</p>
+          <p class="muted-copy"><strong>Responsavel:</strong> ${user.responsavelNome || "Nao informado"}</p>
+          <p class="muted-copy"><strong>Documentos:</strong> ${documents.length} registro(s)</p>
         </div>
         <div class="info-callout">
           <strong>Certificados enviados</strong>
@@ -464,6 +724,129 @@ function openAdminUserModal(user) {
       </div>
     `,
     actions: [{ label: "Fechar", className: "btn-secondary" }]
+  });
+}
+
+function openDocumentModal(doc) {
+  const user = Storage.getUsers().find((item) => item.id === doc.userId);
+  const actions = [];
+  const documentUrl = doc.arquivoDataUrl || doc.arquivoUrl;
+
+  if (documentUrl) {
+    actions.push({
+      label: "Abrir PDF",
+      className: "btn-primary",
+      closeOnClick: false,
+      onClick: () => {
+        window.open(documentUrl, "_blank", "noopener,noreferrer");
+      }
+    });
+    actions.push({
+      label: "Baixar PDF",
+      className: "btn-secondary",
+      closeOnClick: false,
+      onClick: () => {
+        const link = window.document.createElement("a");
+        link.href = documentUrl;
+        link.download = doc.arquivoNome || `${doc.nome}.pdf`;
+        window.document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+    });
+  }
+
+  actions.push({ label: "Fechar", className: "btn-secondary" });
+
+  openModal({
+    title: doc.nome,
+    body: `
+      <div class="admin-stack">
+        <div class="info-callout">
+          <strong>Participante</strong>
+          <p class="muted-copy"><strong>Nome:</strong> ${user?.nome || "Nao encontrado"}</p>
+          <p class="muted-copy"><strong>Email:</strong> ${user?.email || "Nao informado"}</p>
+          <p class="muted-copy"><strong>Categoria:</strong> ${formatSerieLabel(user?.serie || "Nao informada")}</p>
+        </div>
+        <div class="info-callout">
+          <strong>Documento</strong>
+          <p class="muted-copy"><strong>Tipo:</strong> ${doc.tipo}</p>
+          <p class="muted-copy"><strong>Status:</strong> ${doc.status}</p>
+          <p class="muted-copy"><strong>Origem:</strong> ${doc.origem || "manual"}</p>
+          <p class="muted-copy"><strong>Referencia:</strong> ${doc.referencia || "Nao informada"}</p>
+          <p class="muted-copy"><strong>Arquivo:</strong> ${doc.arquivoNome || "Sem PDF anexado"}</p>
+          <p class="muted-copy"><strong>Tamanho:</strong> ${doc.arquivoTamanho ? `${(doc.arquivoTamanho / 1024).toFixed(0)} KB` : "Nao informado"}</p>
+          <p class="muted-copy"><strong>Enviado em:</strong> ${formatDateTime(doc.enviadoEm)}</p>
+          <p class="muted-copy"><strong>Atualizado em:</strong> ${formatDateTime(doc.atualizadoEm)}</p>
+        </div>
+        <div class="info-callout">
+          <strong>Observacoes</strong>
+          <p class="muted-copy">${doc.observacoes || "Sem observacoes."}</p>
+        </div>
+        ${doc.rejectionReasonText ? `
+          <div class="info-callout">
+            <strong>Motivo da recusa</strong>
+            <p class="muted-copy">${doc.rejectionReasonText}</p>
+          </div>
+        ` : ""}
+      </div>
+    `,
+    actions
+  });
+}
+
+function openRejectDocumentModal(doc, onConfirm) {
+  const options = DOCUMENT_REJECTION_REASONS
+    .map((item) => `<option value="${item.value}">${item.label}</option>`)
+    .join("");
+
+  openModal({
+    title: `Recusar ${doc.nome}`,
+    body: `
+      <div class="admin-stack">
+        <div class="form-group">
+          <label class="form-label" for="reject-reason">Motivo da recusa</label>
+          <select id="reject-reason" class="form-control form-select">
+            ${options}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="reject-other-reason">Detalhamento</label>
+          <textarea id="reject-other-reason" class="form-control" placeholder="Se necessario, explique a recusa. Use este campo obrigatoriamente quando escolher Outro."></textarea>
+        </div>
+      </div>
+    `,
+    actions: [
+      { label: "Cancelar", className: "btn-secondary" },
+      {
+        label: "Confirmar recusa",
+        className: "btn-primary",
+        closeOnClick: false,
+        onClick: () => {
+          const reasonSelect = window.document.querySelector("#reject-reason");
+          const otherReasonField = window.document.querySelector("#reject-other-reason");
+          const reasonCode = reasonSelect?.value || "";
+          const otherReason = otherReasonField?.value?.trim() || "";
+
+          if (!reasonCode) {
+            showToast("Selecione o motivo da recusa.", "error");
+            return;
+          }
+
+          if (reasonCode === "outro" && !otherReason) {
+            showToast("Descreva o motivo da recusa no campo Outro.", "error");
+            return;
+          }
+
+          const reasonText =
+            reasonCode === "outro"
+              ? otherReason
+              : `${getRejectionReasonLabel(reasonCode)}${otherReason ? `: ${otherReason}` : ""}`;
+
+          onConfirm({ reasonCode, reasonText });
+        }
+      }
+    ]
   });
 }
 
@@ -618,6 +1001,8 @@ function createSimuladoFromForm(formData) {
 function renderAdminView() {
   showView("admin");
   const users = Storage.getUsers();
+  syncRequiredDocumentsForUsers(users);
+  const documents = Storage.getDocuments();
   const historico = users.flatMap((user) => Storage.getHistorico(user.id));
   const ultimoResultado = historico.sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora))[0];
   const rankingId = state.adminRankingSimuladoId || SIMULADOS_DATA[0]?.id || null;
@@ -629,6 +1014,7 @@ function renderAdminView() {
       users,
       simulados: SIMULADOS_DATA,
       historico,
+      documents,
       section: state.adminSection,
       groups,
       rankingSimuladoId: rankingId,
@@ -722,6 +1108,69 @@ function renderAdminView() {
         state.adminSection = "grupos";
         renderAdminView();
       },
+      onDocumentAction: (action, documentId) => {
+        const document = Storage.getDocuments().find((item) => item.id === documentId);
+        if (!document) {
+          showToast("Documento nao encontrado.", "error");
+          return;
+        }
+
+        if (action === "visualizar") {
+          openDocumentModal(document);
+          return;
+        }
+
+        const nextStatusMap = {
+          validar: "validado",
+          analise: "em_analise",
+          reprovar: "reprovado"
+        };
+
+        const nextStatus = nextStatusMap[action];
+        if (!nextStatus) return;
+
+        if (action === "reprovar") {
+          openRejectDocumentModal(document, ({ reasonCode, reasonText }) => {
+            Storage.updateDocument(documentId, {
+              status: "reprovado",
+              rejectionReasonCode: reasonCode,
+              rejectionReasonText: reasonText,
+              observacoes: `Documento recusado: ${reasonText}`
+            });
+            Storage.addNotification(document.userId, {
+              id: `notif-doc-${Date.now()}`,
+              tipo: "warning",
+              titulo: "Documento recusado",
+              texto: `O documento "${document.nome}" foi recusado. Motivo: ${reasonText}. Reenvie um novo PDF na aba Documentos.`,
+              dataHora: new Date().toISOString()
+            });
+            showToast(`Documento "${document.nome}" recusado.`);
+            renderAdminView();
+            closeModal();
+          });
+          return;
+        }
+
+        Storage.updateDocument(documentId, {
+          status: nextStatus,
+          rejectionReasonCode: "",
+          rejectionReasonText: "",
+          observacoes: action === "validar"
+            ? "Documento aprovado pela equipe OBDIP."
+            : "Documento encaminhado para nova analise."
+        });
+        if (action === "validar") {
+          Storage.addNotification(document.userId, {
+            id: `notif-doc-${Date.now()}`,
+            tipo: "success",
+            titulo: "Documento aprovado",
+            texto: `O documento "${document.nome}" foi aprovado pela equipe OBDIP.`,
+            dataHora: new Date().toISOString()
+          });
+        }
+        showToast(`Documento "${document.nome}" atualizado para ${nextStatus}.`);
+        renderAdminView();
+      },
       onSimuladoAction: (action, simuladoId) => {
         const simulado = SIMULADOS_DATA.find((item) => item.id === simuladoId);
         if (!simulado) {
@@ -751,6 +1200,12 @@ function renderAdminView() {
 
         if (action === "perfil") {
           openAdminUserModal(user);
+          return;
+        }
+
+        if (action === "documentos") {
+          state.adminSection = "documentos";
+          renderAdminView();
           return;
         }
 

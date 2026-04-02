@@ -278,12 +278,14 @@ function renderSimulados(simulados, resultados, user) {
     `;
   }
 
+  const availableFilters = ["Todos", ...new Set(simulados.flatMap((simulado) => simulado.turmas))];
+
   return `
     <section class="student-simulado-page">
       <div class="student-filter-bar">
         <span class="student-filter-label">Filtrar por nivel</span>
         <div class="student-filter-pills">
-          ${["Todos", "EF", "EM", "ES"]
+          ${availableFilters
             .map(
               (filter, index) => `
                 <button class="student-filter-pill ${index === 0 ? "active" : ""}" type="button" data-simulado-filter="${filter}">
@@ -550,6 +552,159 @@ function renderNotifications(notifications) {
   `;
 }
 
+function getDocumentStatusMeta(status) {
+  const meta = {
+    pendente: { label: "Pendente", badge: "badge-warning" },
+    em_analise: { label: "Em analise", badge: "badge-primary" },
+    validado: { label: "Validado", badge: "badge-success" },
+    reprovado: { label: "Recusado", badge: "badge-error" }
+  };
+
+  return meta[status] || { label: status || "Sem status", badge: "badge-muted" };
+}
+
+function renderStudentDocuments(documents) {
+  if (!documents.length) {
+    return `
+      <div class="empty-state student-empty">
+        <strong>Nenhum documento recebido ainda</strong>
+        <p class="muted-copy">Os comprovantes da sua matricula aparecerao aqui para acompanhamento.</p>
+      </div>
+    `;
+  }
+
+  const counts = {
+    total: documents.length,
+    approved: documents.filter((item) => item.status === "validado").length,
+    analysis: documents.filter((item) => item.status === "em_analise").length,
+    rejected: documents.filter((item) => item.status === "reprovado").length
+  };
+
+  return `
+    <section class="student-docs-shell">
+      <article class="student-docs-hero">
+        <div class="student-docs-hero-copy">
+          <span class="student-docs-hero-kicker">Central do aluno</span>
+          <h3>Documentos da matricula</h3>
+          <p>
+            Acompanhe a analise dos PDFs recebidos pela equipe OBDIP, confira aprovacoes,
+            veja motivos de recusa e reenvie o documento quando necessario.
+          </p>
+        </div>
+        <div class="student-docs-hero-mark">
+          <strong>OBDIP</strong>
+          <span>2026</span>
+        </div>
+      </article>
+
+      <section class="student-docs-summary">
+        <article class="student-docs-stat">
+          <span>Total</span>
+          <strong>${counts.total}</strong>
+          <p>Documentos vinculados a sua matricula</p>
+        </article>
+        <article class="student-docs-stat">
+          <span>Aprovados</span>
+          <strong>${counts.approved}</strong>
+          <p>PDFs validados pela equipe</p>
+        </article>
+        <article class="student-docs-stat">
+          <span>Em analise</span>
+          <strong>${counts.analysis}</strong>
+          <p>Arquivos aguardando conferencia</p>
+        </article>
+        <article class="student-docs-stat">
+          <span>Recusados</span>
+          <strong>${counts.rejected}</strong>
+          <p>Itens que exigem novo envio</p>
+        </article>
+      </section>
+
+      <section class="student-docs-layout">
+        <div class="student-docs-main">
+          <div class="student-docs-table-head">
+            <div>
+              <span class="student-docs-table-label">Documento</span>
+              <strong>Situacao da sua documentacao</strong>
+            </div>
+            <span class="student-docs-table-meta">Atualizado automaticamente pela secretaria</span>
+          </div>
+
+          <section class="student-docs-list">
+            ${documents
+              .map((document) => {
+                const statusMeta = getDocumentStatusMeta(document.status);
+                return `
+                  <article class="student-docs-row" data-searchable data-search="${escapeAttribute(`${document.nome} ${document.status} ${document.rejectionReasonText || ""}`)}">
+                    <div class="student-docs-row-main">
+                      <div class="student-docs-row-top">
+                        <div>
+                          <span class="student-docs-type">${document.tipo}</span>
+                          <h3>${document.nome}</h3>
+                        </div>
+                        <span class="badge ${statusMeta.badge}">${statusMeta.label}</span>
+                      </div>
+
+                      <div class="student-docs-meta">
+                        <span>${document.arquivoNome || "PDF recebido na matricula"}</span>
+                        <span>${formatDateTime(document.atualizadoEm || document.enviadoEm)}</span>
+                      </div>
+
+                      <p class="student-copy">${document.referencia || "Documento recebido no fluxo de matricula."}</p>
+
+                      ${document.rejectionReasonText ? `
+                        <div class="student-docs-rejection-box">
+                          <strong>Motivo da reprovacao</strong>
+                          <p>${document.rejectionReasonText}</p>
+                        </div>
+                      ` : ""}
+
+                      ${document.status === "reprovado" ? `
+                        <form class="student-docs-reupload" data-document-reupload-form="${document.id}">
+                          <div class="form-group">
+                            <label class="form-label" for="reupload-${document.id}">Reenviar PDF corrigido</label>
+                            <input id="reupload-${document.id}" class="form-control" type="file" name="arquivo" accept="application/pdf,.pdf" required>
+                          </div>
+                          <button class="btn btn-primary" type="submit">Reenviar documento</button>
+                        </form>
+                      ` : ""}
+                    </div>
+                  </article>
+                `;
+              })
+              .join("")}
+          </section>
+        </div>
+
+        <aside class="student-docs-aside">
+          <article class="student-card student-docs-note">
+            <span class="student-eyebrow">Orientacoes</span>
+            <h3>Como manter sua documentacao regular</h3>
+            <p class="student-copy">
+              Envie sempre PDFs legiveis, com todas as paginas necessarias e informacoes consistentes com o cadastro.
+            </p>
+            <ul class="student-docs-guidelines">
+              <li>Use somente arquivos em PDF.</li>
+              <li>Confira nome completo e instituicao antes do envio.</li>
+              <li>Se houver recusa, corrija o arquivo e reenvie nesta mesma pagina.</li>
+              <li>Aprovacoes e recusas chegam tambem na aba de notificacoes.</li>
+            </ul>
+          </article>
+
+          <article class="student-card student-docs-note student-docs-contact">
+            <span class="student-eyebrow">Atendimento</span>
+            <h3>Precisa de ajuda?</h3>
+            <p class="student-copy">
+              Se tiver duvidas sobre a documentacao da matricula, fale com a equipe pela aba Contato.
+            </p>
+            <button class="btn btn-secondary" type="button" data-nav-jump="contato">Abrir contato</button>
+          </article>
+        </aside>
+      </section>
+    </section>
+  `;
+}
+
 function renderConta(user) {
   return `
     <section class="student-form-layout">
@@ -633,13 +788,14 @@ function renderContato(user) {
 }
 
 export function renderStudentDashboard(root, data, handlers) {
-  const { user, section, ebooks, simulados, resultados, resultadoSelecionado, notifications, certificates, theme = "light" } = data;
+  const { user, section, documents = [], ebooks, simulados, resultados, resultadoSelecionado, notifications, certificates, theme = "light" } = data;
   const pageTitles = {
     home: "Home",
     biblioteca: "E-books",
     simulados: "Simulados",
     desempenho: "Resultados",
     certificados: "Certificados",
+    documentos: "Documentos",
     notificacoes: "Notificacoes",
     conta: "Conta",
     contato: "Contato"
@@ -651,6 +807,7 @@ export function renderStudentDashboard(root, data, handlers) {
     simulados: "Provas disponiveis com status, filtros e acesso imediato.",
     desempenho: "Historico de simulados concluidos e analise detalhada das questoes.",
     certificados: "Documentos disponiveis para download em PDF.",
+    documentos: "Acompanhe aprovacoes, recusas e reenvio dos PDFs da sua matricula.",
     notificacoes: "Feed de avisos e comunicacoes da plataforma.",
     conta: "Dados principais de acesso e configuracoes da conta.",
     contato: "Canal direto com a equipe de suporte."
@@ -662,6 +819,7 @@ export function renderStudentDashboard(root, data, handlers) {
     simulados: renderSimulados(simulados, resultados, user),
     desempenho: renderResultados(resultados, resultadoSelecionado),
     certificados: renderCertificates(certificates),
+    documentos: renderStudentDocuments(documents),
     notificacoes: renderNotifications(notifications),
     conta: renderConta(user),
     contato: renderContato(user)
@@ -673,6 +831,7 @@ export function renderStudentDashboard(root, data, handlers) {
     { key: "simulados", label: "Simulados", icon: "simulados", badge: simulados.length },
     { key: "desempenho", label: "Resultados", icon: "resultados" },
     { key: "certificados", label: "Certificados", icon: "certificados" },
+    { key: "documentos", label: "Documentos", icon: "certificados", badge: documents.filter((item) => item.status === "reprovado").length || null },
     { key: "notificacoes", label: "Notificacoes", icon: "notifications", badge: notifications.length },
     { key: "conta", label: "Conta", icon: "conta" },
     { key: "contato", label: "Contato", icon: "contato" }
@@ -849,6 +1008,13 @@ export function renderStudentDashboard(root, data, handlers) {
   root.querySelector("#contact-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     handlers.onSendContact(new FormData(event.currentTarget));
+  });
+
+  root.querySelectorAll("[data-document-reupload-form]").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      handlers.onReuploadDocument(form.dataset.documentReuploadForm, new FormData(event.currentTarget));
+    });
   });
 
   root.querySelector("[data-logout]")?.addEventListener("click", handlers.onLogout);
