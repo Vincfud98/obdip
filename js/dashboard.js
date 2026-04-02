@@ -495,29 +495,110 @@ function renderCertificates(certificates) {
     return `
       <div class="empty-state student-empty">
         <strong>Nenhum certificado disponivel</strong>
-        <p class="muted-copy">Seus certificados de participacao e desempenho aparecerao aqui.</p>
+        <p class="muted-copy">Seu certificado oficial de participacao aparecera aqui assim que for liberado.</p>
       </div>
     `;
   }
 
+  const certificate = certificates[0];
+  const statusMeta = getCertificateStatusMeta(certificate.status);
+
   return `
-    <section class="student-stack-list">
-      ${certificates
-        .map(
-          (item) => `
-            <article class="student-card student-list-card" data-searchable data-search="${escapeAttribute(`${item.titulo} ${item.tipo}`)}">
+    <section class="certificate-hub">
+      <article class="certificate-hub-hero">
+        <div class="certificate-hub-copy">
+          <span class="certificate-hub-kicker">OBDIP 2026</span>
+          <h3>Certificado oficial de participacao</h3>
+          <p>
+            Esta area reune exclusivamente o seu certificado de participacao na 2a edicao da OBDIP,
+            com emissao institucional e layout pronto para impressao em A4 horizontal.
+          </p>
+        </div>
+        <div class="certificate-hub-stamp">
+          <span>Status</span>
+          <strong>${statusMeta.label}</strong>
+        </div>
+      </article>
+
+      <div class="certificate-hub-layout">
+        <article
+          class="student-card certificate-hub-card"
+          data-searchable
+          data-search="${escapeAttribute(`${certificate.titulo} ${certificate.tipo} ${certificate.status}`)}"
+        >
+          <div class="certificate-hub-card-main">
+            <span class="student-eyebrow">${certificate.tipo}</span>
+            <h3>${certificate.titulo}</h3>
+            <p class="student-copy">${certificate.descricao}</p>
+
+            <div class="certificate-hub-meta">
               <div>
-                <span class="student-eyebrow">${item.tipo}</span>
-                <h3>${item.titulo}</h3>
-                <p class="student-copy">${item.descricao}</p>
+                <span>Liberacao</span>
+                <strong>${certificate.data}</strong>
               </div>
-              <button class="btn btn-secondary" type="button" data-certificate="${item.id}">Baixar PDF</button>
-            </article>
-          `
-        )
-        .join("")}
+              <div>
+                <span>Categoria</span>
+                <strong>${certificate.serieLabel}</strong>
+              </div>
+              <div>
+                <span>Codigo</span>
+                <strong>${certificate.codigo}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="certificate-hub-actions">
+            <span class="student-status-badge ${statusMeta.className}">${statusMeta.label}</span>
+            ${
+              certificate.disponivel
+                ? `<button class="btn btn-primary" type="button" data-certificate="${certificate.id}">${certificate.acao}</button>`
+                : `<button class="btn btn-secondary" type="button" disabled>${certificate.acao}</button>`
+            }
+            <p class="certificate-hub-note-text">
+              ${certificate.disponivel
+                ? "Abra o preview para revisar e imprimir o documento."
+                : "Finalize sua primeira prova para liberar o certificado."}
+            </p>
+          </div>
+        </article>
+
+        <aside class="student-card certificate-hub-aside">
+          <span class="certificate-hub-aside-kicker">Impressao recomendada</span>
+          <h3>Pronto para reuniao, secretaria e arquivo</h3>
+          <p class="student-copy">
+            O certificado foi pensado para impressao em folha A4 horizontal, com acabamento institucional,
+            codigo de validacao e composicao visual mais elegante para apresentacao fisica.
+          </p>
+          <div class="certificate-hub-tips">
+            <div>
+              <span>Formato</span>
+              <strong>A4 horizontal</strong>
+            </div>
+            <div>
+              <span>Papel indicado</span>
+              <strong>Couche ou sulfite 180g</strong>
+            </div>
+            <div>
+              <span>Uso</span>
+              <strong>Impressao e apresentacao</strong>
+            </div>
+          </div>
+        </aside>
+      </div>
     </section>
   `;
+}
+
+function getCertificateStatusMeta(status) {
+  if (status === "Disponivel") {
+    return { label: "Disponivel", className: "student-status-success" };
+  }
+
+  if (status === "Em validacao") {
+    return { label: "Em validacao", className: "student-status-neutral" };
+  }
+
+  return { label: "Pendente", className: "student-status-warning" };
 }
 
 function renderNotifications(notifications) {
@@ -534,22 +615,37 @@ function renderNotifications(notifications) {
     <section class="student-notification-feed">
       ${notifications
         .map(
-          (item) => `
+          (item) => {
+            const notificationMeta = getNotificationTypeMeta(item.tipo);
+
+            return `
             <article class="student-card student-notification-card" data-searchable data-search="${escapeAttribute(`${item.titulo} ${item.texto}`)}">
               <div class="student-card-head">
                 <div>
                   <span class="student-eyebrow">${item.tempo}</span>
                   <h3>${item.titulo}</h3>
                 </div>
-                <span class="student-status-badge student-status-${item.tipo === "success" ? "success" : item.tipo === "warning" ? "warning" : "neutral"}">${item.tipo}</span>
+                <span class="student-status-badge ${notificationMeta.className}">${notificationMeta.label}</span>
               </div>
               <p class="student-copy">${item.texto}</p>
             </article>
-          `
+          `;
+          }
         )
         .join("")}
     </section>
   `;
+}
+
+function getNotificationTypeMeta(type) {
+  const meta = {
+    success: { label: "Sucesso", className: "student-status-success" },
+    warning: { label: "Aviso", className: "student-status-warning" },
+    primary: { label: "Informacao", className: "student-status-neutral" },
+    muted: { label: "Atualizacao", className: "student-status-neutral" }
+  };
+
+  return meta[type] || { label: "Notificacao", className: "student-status-neutral" };
 }
 
 function getDocumentStatusMeta(status) {
@@ -788,7 +884,19 @@ function renderContato(user) {
 }
 
 export function renderStudentDashboard(root, data, handlers) {
-  const { user, section, documents = [], ebooks, simulados, resultados, resultadoSelecionado, notifications, certificates, theme = "light" } = data;
+  const {
+    user,
+    section,
+    documents = [],
+    ebooks,
+    simulados,
+    resultados,
+    resultadoSelecionado,
+    notifications,
+    unreadNotificationCount = 0,
+    certificates,
+    theme = "light"
+  } = data;
   const pageTitles = {
     home: "Home",
     biblioteca: "E-books",
@@ -806,7 +914,7 @@ export function renderStudentDashboard(root, data, handlers) {
     biblioteca: "Materiais organizados em PDF para estudo e revisao.",
     simulados: "Provas disponiveis com status, filtros e acesso imediato.",
     desempenho: "Historico de simulados concluidos e analise detalhada das questoes.",
-    certificados: "Documentos disponiveis para download em PDF.",
+    certificados: "Certificado oficial de participacao pronto para visualizacao e impressao.",
     documentos: "Acompanhe aprovacoes, recusas e reenvio dos PDFs da sua matricula.",
     notificacoes: "Feed de avisos e comunicacoes da plataforma.",
     conta: "Dados principais de acesso e configuracoes da conta.",
@@ -832,7 +940,7 @@ export function renderStudentDashboard(root, data, handlers) {
     { key: "desempenho", label: "Resultados", icon: "resultados" },
     { key: "certificados", label: "Certificados", icon: "certificados" },
     { key: "documentos", label: "Documentos", icon: "certificados", badge: documents.filter((item) => item.status === "reprovado").length || null },
-    { key: "notificacoes", label: "Notificacoes", icon: "notifications", badge: notifications.length },
+    { key: "notificacoes", label: "Notificacoes", icon: "notifications", badge: unreadNotificationCount || null },
     { key: "conta", label: "Conta", icon: "conta" },
     { key: "contato", label: "Contato", icon: "contato" }
   ];
@@ -894,8 +1002,8 @@ export function renderStudentDashboard(root, data, handlers) {
             </button>
             <button class="header-icon-btn student-bell-btn" type="button" data-nav="notificacoes" aria-label="Abrir notificacoes">
               <span class="nav-item-icon nav-item-icon-svg">${renderIcon("notifications")}</span>
-              <span class="dot"></span>
-              <span class="student-bell-badge">${notifications.length}</span>
+              ${unreadNotificationCount ? '<span class="dot"></span>' : ""}
+              ${unreadNotificationCount ? `<span class="student-bell-badge">${unreadNotificationCount}</span>` : ""}
             </button>
             <button class="student-topbar-user" type="button" data-open-profile>
               <div class="student-topbar-user-meta">

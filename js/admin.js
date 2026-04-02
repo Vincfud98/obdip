@@ -38,6 +38,12 @@ function renderIcon(name) {
         <path d="M9.5 12h5M9.5 15.5h5M9.5 19h3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
       </svg>
     `,
+    certificates: `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 4h10v8a5 5 0 01-10 0V4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M10 16l-1 4 3-2 3 2-1-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+      </svg>
+    `,
     search: `
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
@@ -162,6 +168,7 @@ function renderSidebar(section) {
     { key: "ranking", label: "Ranking", icon: "ranking" },
     { key: "grupos", label: "Grupos", icon: "groups" },
     { key: "usuarios", label: "Usuarios", icon: "users" },
+    { key: "certificados", label: "Certificados", icon: "certificates" },
     { key: "documentos", label: "Documentos", icon: "documents" }
   ];
 
@@ -219,6 +226,7 @@ function renderTopHeader(section, theme) {
     ranking: { title: "Ranking", description: "Ordenacao por simulado com modal de desempenho individual." },
     grupos: { title: "Grupos de alunos", description: "Gerencie os grupos da plataforma e acompanhe a distribuicao da base." },
     usuarios: { title: "Gerenciar usuarios", description: "Permissao de email, suspensao, banimento, troca de senha e perfil." },
+    certificados: { title: "Certificados", description: "Valide os certificados oficiais de participacao liberados para os alunos." },
     documentos: { title: "Documentos", description: "Centralize comprovantes, autorizacoes e validacoes dos participantes." }
   };
 
@@ -914,6 +922,116 @@ function renderDocumentsPage(users, documents) {
   `;
 }
 
+function getAdminCertificateStatusMeta(status) {
+  const meta = {
+    pendente_validacao: { label: "Pendente de validacao", badge: "badge-warning" },
+    validado: { label: "Validado", badge: "badge-success" }
+  };
+
+  return meta[status] || { label: status || "Sem status", badge: "badge-muted" };
+}
+
+function renderCertificatesPage(certificates) {
+  const counters = {
+    total: certificates.length,
+    pendente: certificates.filter((item) => item.status === "pendente_validacao").length,
+    validado: certificates.filter((item) => item.status === "validado").length
+  };
+
+  return `
+    <section class="admin-ga-workspace-grid admin-lte-workspace-grid">
+      <article class="admin-ga-surface admin-lte-card-surface">
+        <div class="card-header admin-lte-card-header">
+          <div>
+            <h3>Central de validacao</h3>
+            <p class="muted-copy">Esta area mostra apenas certificados de participacao elegiveis para validacao administrativa.</p>
+          </div>
+          ${renderCardTools(["Participacao", "OBDIP 2026"])}
+        </div>
+        <div class="card-body admin-stack">
+          <div class="info-callout">
+            <strong>Fluxo da equipe</strong>
+            <p class="muted-copy">
+              O certificado de participacao passa a ficar disponivel para o aluno somente depois da validacao da equipe.
+              Quando voce validar, o estudante recebe uma notificacao e o documento e liberado na aba Certificados.
+            </p>
+          </div>
+
+          <div class="admin-ga-pipeline">
+            <div class="admin-ga-pipeline-card">
+              <span>Elegiveis</span>
+              <strong>${counters.total}</strong>
+            </div>
+            <div class="admin-ga-pipeline-card">
+              <span>Pendentes</span>
+              <strong>${counters.pendente}</strong>
+            </div>
+            <div class="admin-ga-pipeline-card">
+              <span>Validados</span>
+              <strong>${counters.validado}</strong>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="admin-ga-surface admin-lte-card-surface mt-6">
+      <div class="card-header admin-lte-card-header">
+        <div>
+          <h3>Fila de certificados</h3>
+          <p class="muted-copy">Alunos com pelo menos uma prova concluida e aptos a receber o certificado oficial de participacao.</p>
+        </div>
+        ${renderCardTools([`${certificates.length} certificados`])}
+      </div>
+      <div class="card-body admin-stack">
+        ${
+          !certificates.length
+            ? `
+              <div class="empty-state">
+                <strong>Nenhum certificado elegivel</strong>
+                <p class="muted-copy">Assim que os alunos concluirem a primeira prova, eles aparecerao aqui para validacao.</p>
+              </div>
+            `
+            : certificates
+                .map((certificate) => {
+                  const statusMeta = getAdminCertificateStatusMeta(certificate.status);
+
+                  return `
+                    <article class="admin-ga-list-card admin-lte-list-card">
+                      <div class="admin-ga-list-top">
+                        <div>
+                          <div class="tag-row">
+                            <span class="badge badge-primary">Participacao</span>
+                            <span class="badge ${statusMeta.badge}">${statusMeta.label}</span>
+                          </div>
+                          <h4 class="mt-4">${certificate.nome}</h4>
+                          <p class="muted-copy mt-2">${certificate.email} | ${certificate.serieLabel}</p>
+                          <p class="muted-copy mt-2">${certificate.escola}</p>
+                        </div>
+                        <div class="text-right">
+                          <span class="surface-eyebrow">${certificate.provasConcluidas} prova(s)</span>
+                          <p class="muted-copy mt-2">${certificate.validadoEm ? `Validado em ${formatDateTime(certificate.validadoEm)}` : `Ultimo resultado em ${formatDateTime(certificate.ultimoResultadoEm)}`}</p>
+                        </div>
+                      </div>
+
+                      <div class="admin-lte-list-footer">
+                        <span class="admin-lte-tool-chip">Codigo ${certificate.codigo}</span>
+                        ${
+                          certificate.status === "validado"
+                            ? `<button class="btn btn-secondary btn-sm" type="button" disabled>Certificado validado</button>`
+                            : `<button class="btn btn-primary btn-sm" type="button" data-certificate-admin-action="validar" data-certificate-user-id="${certificate.userId}">Validar certificado</button>`
+                        }
+                      </div>
+                    </article>
+                  `;
+                })
+                .join("")
+        }
+      </div>
+    </section>
+  `;
+}
+
 function renderUsersPage(users) {
   return `
     <section class="admin-ga-surface admin-lte-card-surface">
@@ -1036,7 +1154,7 @@ function mountCanvasCharts(root) {
 }
 
 export function renderAdminDashboard(root, data, handlers) {
-  const { users, simulados, historico = [], documents = [], section, groups, rankingSimuladoId, ranking, theme = "light" } = data;
+  const { users, simulados, historico = [], documents = [], certificates = [], section, groups, rankingSimuladoId, ranking, theme = "light" } = data;
   const rankingSimulado = simulados.find((item) => item.id === rankingSimuladoId) || simulados[0] || null;
   const analytics = buildAnalytics(users, simulados, historico, groups);
   const activeGroups = groups.filter((group) => group.active);
@@ -1047,6 +1165,7 @@ export function renderAdminDashboard(root, data, handlers) {
     ranking: renderRankingPage(simulados, rankingSimulado, ranking),
     grupos: renderGroupsPage(groups, users),
     usuarios: renderUsersPage(users),
+    certificados: renderCertificatesPage(certificates),
     documentos: renderDocumentsPage(users, documents)
   };
 
@@ -1120,6 +1239,12 @@ export function renderAdminDashboard(root, data, handlers) {
   root.querySelectorAll("[data-document-action]").forEach((button) => {
     button.addEventListener("click", () => {
       handlers.onDocumentAction(button.dataset.documentAction, button.dataset.documentId);
+    });
+  });
+
+  root.querySelectorAll("[data-certificate-admin-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      handlers.onCertificateAction(button.dataset.certificateAdminAction, button.dataset.certificateUserId);
     });
   });
 

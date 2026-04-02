@@ -89,34 +89,466 @@ function showView(name) {
 }
 
 function getCertificates(user, resultados) {
+  const completedResults = resultados.filter(Boolean);
+  const latestHistorico = getLatestHistorico(user.id);
+  const available = completedResults.length > 0;
+  const record = Storage.getCertificateRecord(user.id, "participacao");
+  const validated = available && record?.status === "validado";
+  const issuedAt = record?.validatedAt || latestHistorico?.dataHora || user.criadoEm || new Date().toISOString();
+
   return [
     {
-      id: "cert-matricula",
-      titulo: "Comprovante de matricula",
-      descricao: `Documento vinculado ao cadastro de ${user.nome}.`,
-      status: "Validado",
-      tipo: "Matricula",
-      data: formatDateTime(user.criadoEm || new Date().toISOString()),
-      acao: "Visualizar comprovante"
-    },
-    {
       id: "cert-participacao",
-      titulo: "Certificado de participacao",
-      descricao: resultados.filter(Boolean).length
-        ? "Liberado para alunos com provas concluidas."
-        : "Sera liberado depois da primeira prova finalizada.",
-      status: resultados.filter(Boolean).length ? "Validado" : "Pendente",
+      titulo: "Certificado oficial de participacao",
+      descricao: validated
+        ? "Documento validado pela equipe OBDIP e liberado para impressao."
+        : available
+        ? "Seu certificado esta aguardando validacao da equipe OBDIP."
+        : "Este certificado sera liberado assim que sua primeira prova for concluida.",
+      status: validated ? "Disponivel" : available ? "Em validacao" : "Pendente",
       tipo: "Participacao",
-      data: resultados.filter(Boolean).length
-        ? formatDateTime(getLatestHistorico(user.id)?.dataHora || new Date().toISOString())
-        : "Aguardando conclusao",
-      acao: resultados.filter(Boolean).length ? "Baixar certificado" : "Aguardando"
+      data: validated ? formatDateTime(issuedAt) : available ? "Aguardando validacao" : "Aguardando conclusao",
+      acao: validated ? "Visualizar certificado" : available ? "Aguardando validacao" : "Aguardando liberacao",
+      disponivel: validated,
+      emitidoEm: issuedAt,
+      codigo: record?.codigo || getCertificateCode(user, issuedAt),
+      serieLabel: formatSerieLabel(user.serie),
+      provasConcluidas: completedResults.length
     }
   ];
 }
 
 function getLatestHistorico(userId) {
   return Storage.getHistorico(userId).sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora))[0] || null;
+}
+
+function getAdminCertificateEntries(users) {
+  return users
+    .map((user) => {
+      const historico = Storage.getHistorico(user.id);
+      if (!historico.length) {
+        return null;
+      }
+
+      const latestHistorico = historico.sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora))[0] || null;
+      const record = Storage.getCertificateRecord(user.id, "participacao");
+      const validationBaseDate = record?.validatedAt || latestHistorico?.dataHora || user.criadoEm || new Date().toISOString();
+
+      return {
+        id: `cert-admin-${user.id}`,
+        userId: user.id,
+        nome: user.nome,
+        email: user.email,
+        escola: user.escola || "Escola nao informada",
+        serie: user.serie,
+        serieLabel: formatSerieLabel(user.serie),
+        provasConcluidas: historico.length,
+        ultimoResultadoEm: latestHistorico?.dataHora || null,
+        status: record?.status === "validado" ? "validado" : "pendente_validacao",
+        validadoEm: record?.validatedAt || null,
+        codigo: record?.codigo || getCertificateCode(user, validationBaseDate)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const statusWeight = (item) => (item.status === "pendente_validacao" ? 0 : 1);
+      const statusDelta = statusWeight(a) - statusWeight(b);
+      if (statusDelta !== 0) return statusDelta;
+      return new Date(b.ultimoResultadoEm || 0) - new Date(a.ultimoResultadoEm || 0);
+    });
+}
+
+function getCertificateCode(user, issuedAt) {
+  const normalizedKey = String(user.id || user.email || user.nome || "aluno")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(-8)
+    .padStart(8, "0");
+
+  return `OBDIP-2026-${normalizedKey}-${new Date(issuedAt).getFullYear()}`;
+}
+
+function escapeHtml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatCertificateDate(value) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric"
+  }).format(new Date(value));
+}
+
+function getCertificateMarkup(user, certificate) {
+  const issueDate = formatCertificateDate(certificate.emitidoEm);
+
+  return `
+    <section class="certificate-sheet" aria-label="Certificado de participacao">
+      <div class="certificate-frame">
+        <div class="certificate-corner certificate-corner-top"></div>
+        <div class="certificate-corner certificate-corner-bottom"></div>
+
+        <header class="certificate-header">
+          <div>
+            <span class="certificate-kicker">Olimpiada cientifica</span>
+            <strong>OBDIP 2026</strong>
+            <p>2a Olimpiada Brasileira de Diplomacia e Relacoes Internacionais</p>
+          </div>
+          <div class="certificate-seal">
+            <span>Participacao</span>
+            <strong>OFICIAL</strong>
+          </div>
+        </header>
+
+        <div class="certificate-body">
+          <span class="certificate-label">Certificado de participacao</span>
+          <h2>Certificamos que</h2>
+          <h1>${escapeHtml(user.nome)}</h1>
+          <p class="certificate-text">
+            participou da 2a edicao da Olimpiada Brasileira de Diplomacia e Relacoes Internacionais,
+            iniciativa academica voltada ao desenvolvimento do pensamento critico, cientifico e da
+            argumentacao sobre politica externa brasileira e temas globais.
+          </p>
+          <div class="certificate-highlight">
+            <div>
+              <span>Categoria</span>
+              <strong>${escapeHtml(certificate.serieLabel)}</strong>
+            </div>
+            <div>
+              <span>Provas concluidas</span>
+              <strong>${certificate.provasConcluidas}</strong>
+            </div>
+            <div>
+              <span>Emissao</span>
+              <strong>${escapeHtml(issueDate)}</strong>
+            </div>
+          </div>
+        </div>
+
+        <footer class="certificate-footer">
+          <div class="certificate-signature">
+            <strong>Coordenacao Geral OBDIP</strong>
+            <span>Documento valido para apresentacao academica e institucional.</span>
+          </div>
+          <div class="certificate-code-block">
+            <span>Codigo de validacao</span>
+            <strong>${escapeHtml(certificate.codigo)}</strong>
+          </div>
+        </footer>
+      </div>
+    </section>
+  `;
+}
+
+function getPrintableCertificateDocument(user, certificate) {
+  return `
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${escapeHtml(certificate.titulo)} - ${escapeHtml(user.nome)}</title>
+        <style>
+          @page {
+            size: A4 landscape;
+            margin: 12mm;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          html, body {
+            margin: 0;
+            padding: 0;
+            background: #eef3fb;
+            color: #0f172a;
+            font-family: "Segoe UI", Arial, sans-serif;
+          }
+
+          body {
+            padding: 18px;
+          }
+
+          .certificate-print-wrap {
+            width: 100%;
+          }
+
+          .certificate-sheet {
+            width: 100%;
+          }
+
+          .certificate-frame {
+            position: relative;
+            min-height: 180mm;
+            padding: 26mm 24mm;
+            border-radius: 28px;
+            border: 3px solid #b98a2f;
+            background:
+              radial-gradient(circle at top right, rgba(20, 87, 197, 0.12), transparent 28%),
+              radial-gradient(circle at bottom left, rgba(185, 138, 47, 0.12), transparent 30%),
+              linear-gradient(135deg, #ffffff 0%, #f8fbff 100%);
+            box-shadow: 0 18px 60px rgba(15, 23, 42, 0.12);
+            overflow: hidden;
+          }
+
+          .certificate-frame::before,
+          .certificate-frame::after {
+            content: "";
+            position: absolute;
+            inset: 18px;
+            border-radius: 22px;
+            border: 1px solid rgba(11, 47, 111, 0.14);
+            pointer-events: none;
+          }
+
+          .certificate-corner {
+            position: absolute;
+            width: 150px;
+            height: 150px;
+            border: 2px solid rgba(185, 138, 47, 0.5);
+            border-radius: 30px;
+          }
+
+          .certificate-corner-top {
+            top: 18px;
+            left: 18px;
+            border-right: 0;
+            border-bottom: 0;
+          }
+
+          .certificate-corner-bottom {
+            right: 18px;
+            bottom: 18px;
+            border-left: 0;
+            border-top: 0;
+          }
+
+          .certificate-header,
+          .certificate-footer {
+            display: flex;
+            justify-content: space-between;
+            gap: 24px;
+            align-items: flex-start;
+          }
+
+          .certificate-header strong {
+            display: block;
+            margin-top: 10px;
+            color: #0b2f6f;
+            font-size: 24px;
+            letter-spacing: 0.14em;
+          }
+
+          .certificate-header p,
+          .certificate-signature span,
+          .certificate-code-block span {
+            margin: 8px 0 0;
+            color: #52627c;
+            font-size: 13px;
+            line-height: 1.6;
+          }
+
+          .certificate-kicker,
+          .certificate-label {
+            display: inline-flex;
+            align-items: center;
+            min-height: 30px;
+            padding: 0 14px;
+            border-radius: 999px;
+            background: rgba(11, 47, 111, 0.08);
+            color: #0b2f6f;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+          }
+
+          .certificate-seal {
+            min-width: 160px;
+            padding: 18px 16px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #0b2f6f 0%, #1457c5 100%);
+            color: #ffffff;
+            text-align: center;
+            box-shadow: 0 12px 24px rgba(11, 47, 111, 0.22);
+          }
+
+          .certificate-seal span {
+            display: block;
+            font-size: 11px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            opacity: 0.8;
+          }
+
+          .certificate-seal strong {
+            display: block;
+            margin-top: 8px;
+            color: #ffffff;
+            font-size: 20px;
+            letter-spacing: 0.08em;
+          }
+
+          .certificate-body {
+            margin: 22px 0 28px;
+            text-align: center;
+          }
+
+          .certificate-body h2 {
+            margin: 24px 0 10px;
+            font-family: Georgia, "Times New Roman", serif;
+            color: #17376d;
+            font-size: 24px;
+            font-weight: 500;
+          }
+
+          .certificate-body h1 {
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+            color: #8d6421;
+            font-size: 48px;
+            line-height: 1.08;
+            letter-spacing: 0.04em;
+          }
+
+          .certificate-text {
+            max-width: 860px;
+            margin: 20px auto 0;
+            color: #334155;
+            font-size: 17px;
+            line-height: 1.75;
+          }
+
+          .certificate-highlight {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+            margin-top: 28px;
+          }
+
+          .certificate-highlight div {
+            padding: 16px 18px;
+            border-radius: 18px;
+            border: 1px solid rgba(11, 47, 111, 0.12);
+            background: rgba(255, 255, 255, 0.82);
+          }
+
+          .certificate-highlight span,
+          .certificate-code-block span {
+            display: block;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+          }
+
+          .certificate-highlight strong,
+          .certificate-code-block strong,
+          .certificate-signature strong {
+            display: block;
+            margin-top: 8px;
+            color: #0f172a;
+            font-size: 17px;
+          }
+
+          .certificate-footer {
+            align-items: end;
+          }
+
+          .certificate-signature {
+            min-width: 320px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(11, 47, 111, 0.22);
+          }
+
+          .certificate-code-block {
+            min-width: 250px;
+            padding: 16px 18px;
+            border-radius: 18px;
+            background: rgba(11, 47, 111, 0.05);
+            border: 1px solid rgba(11, 47, 111, 0.12);
+          }
+
+          @media print {
+            html, body {
+              background: #ffffff;
+            }
+
+            body {
+              padding: 0;
+            }
+
+            .certificate-frame {
+              box-shadow: none;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="certificate-print-wrap">
+          ${getCertificateMarkup(user, certificate)}
+        </div>
+      </body>
+    </html>
+  `;
+}
+
+function printCertificate(user, certificate) {
+  const printWindow = window.open("", "_blank", "noopener,noreferrer,width=1280,height=900");
+
+  if (!printWindow) {
+    showToast("Nao foi possivel abrir a janela de impressao.", "error");
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(getPrintableCertificateDocument(user, certificate));
+  printWindow.document.close();
+  printWindow.focus();
+
+  window.setTimeout(() => {
+    printWindow.print();
+  }, 300);
+}
+
+function openStudentCertificateModal(user, certificate) {
+  if (!certificate?.disponivel) {
+    showToast("Finalize sua primeira prova para liberar o certificado.", "warning");
+    return;
+  }
+
+  openModal({
+    title: "Certificado de participacao",
+    size: "modal-xl",
+    body: `
+      <div class="certificate-modal-shell">
+        <div class="certificate-modal-toolbar">
+          <div>
+            <strong>Pronto para impressao em A4 horizontal</strong>
+            <p class="muted-copy">Confira o nome, a categoria e o codigo antes de imprimir.</p>
+          </div>
+          <span class="badge badge-success">Disponivel</span>
+        </div>
+        ${getCertificateMarkup(user, certificate)}
+      </div>
+    `,
+    actions: [
+      { label: "Fechar", className: "btn-secondary" },
+      {
+        label: "Imprimir certificado",
+        className: "btn-primary",
+        closeOnClick: false,
+        onClick: () => printCertificate(user, certificate)
+      }
+    ]
+  });
 }
 
 function getNotifications(user, simulados, resultados) {
@@ -130,14 +562,14 @@ function getNotifications(user, simulados, resultados) {
   }));
   const items = [
     {
-      id: "notif-1",
+      id: `notif-biblioteca-${user.serie}`,
       tipo: "primary",
       titulo: "Biblioteca atualizada",
       texto: `Novos materiais para ${formatSerieLabel(user.serie)} ja podem ser baixados na biblioteca.`,
       tempo: "Agora"
     },
     {
-      id: "notif-2",
+      id: `notif-simulado-${simulados[0]?.id || "nenhum"}`,
       tipo: "warning",
       titulo: "Simulado disponivel",
       texto: simulados[0]
@@ -149,7 +581,7 @@ function getNotifications(user, simulados, resultados) {
 
   if (latest) {
     items.unshift({
-      id: "notif-3",
+      id: `notif-resultado-${latest.simuladoId}-${latest.dataHora}`,
       tipo: "success",
       titulo: "Resultado corrigido",
       texto: `Sua ultima tentativa registrou ${latest.percentual}% de acerto.`,
@@ -159,7 +591,7 @@ function getNotifications(user, simulados, resultados) {
 
   if (!resultados.filter(Boolean).length) {
     items.push({
-      id: "notif-4",
+      id: `notif-primeira-prova-${user.id}`,
       tipo: "muted",
       titulo: "Primeira prova",
       texto: "Finalize seu primeiro simulado para liberar a pagina de desempenho e certificados.",
@@ -182,6 +614,8 @@ function getStudentData(user) {
     simulados[0]?.id ||
     null;
   const notifications = getNotifications(user, simulados, resultados);
+  const readNotificationIds = Storage.getReadNotificationIds(user.id);
+  const unreadNotificationCount = notifications.filter((item) => !readNotificationIds.includes(item.id)).length;
   const certificates = getCertificates(user, resultados);
 
   return {
@@ -190,6 +624,7 @@ function getStudentData(user) {
     simulados,
     resultados,
     notifications,
+    unreadNotificationCount,
     certificates,
     resultadoSelecionado: selectedResultadoId
       ? Storage.getResultado(selectedResultadoId, user.id)
@@ -226,7 +661,7 @@ function openStudentProfile(user) {
         </div>
         <div class="info-callout">
           <strong>Certificados</strong>
-          <p class="muted-copy">Area pronta para exibir matricula, participacao e comprovantes enviados.</p>
+          <p class="muted-copy">Area pronta para exibir o certificado oficial de participacao e os comprovantes enviados.</p>
         </div>
       </div>
     `,
@@ -283,7 +718,7 @@ function renderLandingView() {
           return;
         }
 
-        /* Validacao de senha (opcional — so verifica se o usuario tiver senha cadastrada) */
+        /* Validacao de senha (opcional - so verifica se o usuario tiver senha cadastrada) */
         const passwordProvided = password?.toString().trim();
         if (user.senha && passwordProvided && user.senha !== passwordProvided) {
           showToast("Senha incorreta. Tente novamente.", "error");
@@ -565,6 +1000,17 @@ function syncRequiredDocumentsForUsers(users) {
 function renderStudentView() {
   showView("student");
   const user = state.currentUser;
+
+  if (state.studentSection === "notificacoes") {
+    const currentSimulados = getSimuladosByTurma(user.serie);
+    const currentResults = currentSimulados.map((simulado) => Storage.getResultado(simulado.id, user.id));
+    const currentNotifications = getNotifications(user, currentSimulados, currentResults);
+    Storage.markNotificationsAsRead(
+      user.id,
+      currentNotifications.map((item) => item.id)
+    );
+  }
+
   const data = getStudentData(user);
 
   renderStudentDashboard(
@@ -620,7 +1066,13 @@ function renderStudentView() {
         showToast(`Download simulado de "${ebook?.titulo || "e-book"}".`);
       },
       onOpenCertificate: (certificateId) => {
-        showToast(`Acao simulada para o certificado ${certificateId}.`);
+        const certificate = data.certificates.find((item) => item.id === certificateId);
+        if (!certificate) {
+          showToast("Certificado nao encontrado.", "error");
+          return;
+        }
+
+        openStudentCertificateModal(user, certificate);
       },
       onSaveAccount: (formData) => {
         const nextEmail = formData.get("email")?.toString().trim().toLowerCase();
@@ -1003,6 +1455,7 @@ function renderAdminView() {
   const users = Storage.getUsers();
   syncRequiredDocumentsForUsers(users);
   const documents = Storage.getDocuments();
+  const certificates = getAdminCertificateEntries(users);
   const historico = users.flatMap((user) => Storage.getHistorico(user.id));
   const ultimoResultado = historico.sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora))[0];
   const rankingId = state.adminRankingSimuladoId || SIMULADOS_DATA[0]?.id || null;
@@ -1015,6 +1468,7 @@ function renderAdminView() {
       simulados: SIMULADOS_DATA,
       historico,
       documents,
+      certificates,
       section: state.adminSection,
       groups,
       rankingSimuladoId: rankingId,
@@ -1169,6 +1623,50 @@ function renderAdminView() {
           });
         }
         showToast(`Documento "${document.nome}" atualizado para ${nextStatus}.`);
+        renderAdminView();
+      },
+      onCertificateAction: (action, userId) => {
+        if (action !== "validar") return;
+
+        const user = Storage.getUsers().find((item) => item.id === userId);
+        if (!user) {
+          showToast("Aluno nao encontrado.", "error");
+          return;
+        }
+
+        const latestHistorico = getLatestHistorico(user.id);
+        if (!latestHistorico) {
+          showToast("Este aluno ainda nao concluiu provas para emitir certificado.", "error");
+          return;
+        }
+
+        const existingRecord = Storage.getCertificateRecord(user.id, "participacao");
+        if (existingRecord?.status === "validado") {
+          showToast(`O certificado de ${user.nome} ja foi validado.`);
+          return;
+        }
+
+        const validatedAt = new Date().toISOString();
+        const codigo = getCertificateCode(user, validatedAt);
+
+        Storage.saveCertificate({
+          id: `cert-participacao-${user.id}`,
+          userId: user.id,
+          type: "participacao",
+          status: "validado",
+          titulo: "Certificado oficial de participacao",
+          codigo,
+          validatedAt
+        });
+        Storage.addNotification(user.id, {
+          id: `notif-cert-${Date.now()}`,
+          tipo: "success",
+          titulo: "Certificado validado",
+          texto: 'Seu certificado oficial de participacao foi validado pela equipe OBDIP e ja pode ser acessado na aba "Certificados".',
+          dataHora: validatedAt
+        });
+        showToast(`Certificado de ${user.nome} validado com sucesso.`);
+        state.adminSection = "certificados";
         renderAdminView();
       },
       onSimuladoAction: (action, simuladoId) => {

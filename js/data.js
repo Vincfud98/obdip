@@ -363,6 +363,24 @@ const Storage = {
     return notification;
   },
 
+  /** Retorna os IDs das notificacoes ja lidas pelo usuario */
+  getReadNotificationIds(userId) {
+    return JSON.parse(localStorage.getItem(`obdip_notifications_read_${userId}`) || "[]");
+  },
+
+  /** Salva os IDs das notificacoes ja lidas pelo usuario */
+  saveReadNotificationIds(userId, notificationIds) {
+    localStorage.setItem(`obdip_notifications_read_${userId}`, JSON.stringify(notificationIds));
+  },
+
+  /** Marca notificacoes como lidas */
+  markNotificationsAsRead(userId, notificationIds = []) {
+    const currentIds = this.getReadNotificationIds(userId);
+    const mergedIds = [...new Set([...currentIds, ...notificationIds.filter(Boolean)])];
+    this.saveReadNotificationIds(userId, mergedIds);
+    return mergedIds;
+  },
+
   /** Retorna todos os documentos cadastrados */
   getDocuments() {
     return JSON.parse(localStorage.getItem("obdip_documents") || "[]");
@@ -399,6 +417,44 @@ const Storage = {
   /** Lista documentos de um usuario */
   getDocumentsByUser(userId) {
     return this.getDocuments().filter((item) => item.userId === userId);
+  },
+
+  /** Retorna todos os certificados persistidos */
+  getCertificates() {
+    return JSON.parse(localStorage.getItem("obdip_certificates") || "[]");
+  },
+
+  /** Salva todos os certificados */
+  saveCertificates(certificates) {
+    localStorage.setItem("obdip_certificates", JSON.stringify(certificates));
+  },
+
+  /** Retorna um certificado especifico do usuario */
+  getCertificateRecord(userId, type = "participacao") {
+    return this.getCertificates().find((item) => item.userId === userId && item.type === type) || null;
+  },
+
+  /** Cria ou atualiza um certificado */
+  saveCertificate(record) {
+    const certificates = this.getCertificates();
+    const index = certificates.findIndex(
+      (item) => item.userId === record.userId && item.type === (record.type || "participacao")
+    );
+    const nextRecord = {
+      ...certificates[index],
+      ...record,
+      type: record.type || "participacao",
+      atualizadoEm: new Date().toISOString()
+    };
+
+    if (index >= 0) {
+      certificates[index] = nextRecord;
+    } else {
+      certificates.push(nextRecord);
+    }
+
+    this.saveCertificates(certificates);
+    return nextRecord;
   },
 
   /** Retorna respostas salvas de um simulado */
