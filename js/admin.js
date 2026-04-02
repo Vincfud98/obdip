@@ -44,6 +44,12 @@ function renderIcon(name) {
         <path d="M10 16l-1 4 3-2 3 2-1-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
       </svg>
     `,
+    notifications: `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 4a4 4 0 014 4v2.4c0 .8.25 1.59.71 2.25L18 14.5H6l1.29-1.85A4 4 0 008 10.4V8a4 4 0 014-4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M10 18a2 2 0 004 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    `,
     search: `
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
@@ -298,8 +304,6 @@ function renderTopHeader(section, theme) {
         <button class="header-icon-btn admin-lte-topbar-btn" type="button" aria-label="Alternar tema" data-admin-theme-toggle>
           <span class="nav-item-icon nav-item-icon-svg">${renderIcon(theme === "dark" ? "sun" : "moon")}</span>
         </button>
-        <button class="header-icon-btn admin-lte-topbar-btn" type="button" aria-label="Mensagens">3</button>
-        <button class="header-icon-btn admin-lte-topbar-btn" type="button" aria-label="Notificacoes">15</button>
         <div class="admin-topbar-user">
           <div class="admin-topbar-user-meta">
             <strong>Equipe OBDIP</strong>
@@ -314,10 +318,19 @@ function renderTopHeader(section, theme) {
         <h1>${current.title}</h1>
         <p>${current.description}</p>
       </div>
-      <div class="admin-lte-breadcrumb">
-        <span>Home</span>
-        <span>/</span>
-        <strong>${current.title}</strong>
+      <div class="admin-content-header-actions">
+        <div class="admin-lte-breadcrumb">
+          <span>Home</span>
+          <span>/</span>
+          <strong>${current.title}</strong>
+        </div>
+        <button class="admin-notification-launch" type="button" data-open-admin-notification>
+          <span class="admin-notification-launch-icon nav-item-icon-svg">${renderIcon("notifications")}</span>
+          <span class="admin-notification-launch-copy">
+            <strong>Enviar notificacao</strong>
+            <small>Todos, grupos ou alunos especificos</small>
+          </span>
+        </button>
       </div>
     </section>
   `;
@@ -1280,6 +1293,7 @@ export function renderAdminDashboard(root, data, handlers) {
   });
 
   root.querySelector("[data-admin-theme-toggle]")?.addEventListener("click", handlers.onToggleTheme);
+  root.querySelector("[data-open-admin-notification]")?.addEventListener("click", handlers.onOpenAdminNotification);
 
   overlay?.addEventListener("click", () => {
     sidebar?.classList.remove("mobile-open");

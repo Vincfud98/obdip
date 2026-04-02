@@ -1326,6 +1326,183 @@ function openRejectDocumentModal(doc, onConfirm) {
   });
 }
 
+function doesSerieBelongToGroup(serie, groupCode) {
+  const aliasMap = {
+    EFI: ["EFI", "EF"],
+    EFII: ["EFII", "EF"],
+    EF: ["EF", "EFI", "EFII"],
+    EM: ["EM"],
+    ES: ["ES"],
+    Senior: ["Senior"],
+    NemNem: ["NemNem", "Desempregado"],
+    Desempregado: ["Desempregado", "NemNem"]
+  };
+
+  const serieAliases = aliasMap[serie] || [serie];
+  const groupAliases = aliasMap[groupCode] || [groupCode];
+  return serieAliases.some((item) => groupAliases.includes(item));
+}
+
+function openAdminNotificationModal(users, groups, onConfirm) {
+  const students = users.filter((item) => item.role !== "admin");
+  const groupOptions = groups
+    .map(
+      (group) => `
+        <label class="checkbox-group admin-notification-option">
+          <input type="checkbox" value="${group.code}" data-admin-notification-group>
+          <span>
+            <strong>${group.name}</strong>
+            <small>${group.code}</small>
+          </span>
+        </label>
+      `
+    )
+    .join("");
+  const studentOptions = students
+    .map(
+      (student) => `
+        <label class="checkbox-group admin-notification-option">
+          <input type="checkbox" value="${student.id}" data-admin-notification-student>
+          <span>
+            <strong>${student.nome}</strong>
+            <small>${student.email} | ${formatSerieLabel(student.serie)}</small>
+          </span>
+        </label>
+      `
+    )
+    .join("");
+
+  openModal({
+    title: "Enviar notificacao",
+    size: "modal-lg",
+    body: `
+      <div class="admin-stack admin-notification-compose">
+        <div class="info-callout">
+          <strong>Alcance da mensagem</strong>
+          <p class="muted-copy">Escolha se o comunicado sera geral, por grupos ou para alunos especificos. A notificacao aparecera na aba Notificacoes do aluno.</p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="admin-notification-title">Titulo da notificacao</label>
+          <input id="admin-notification-title" class="form-control" type="text" maxlength="90" placeholder="Ex.: Cronograma oficial atualizado">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="admin-notification-message">Mensagem</label>
+          <textarea id="admin-notification-message" class="form-control" rows="5" placeholder="Escreva o aviso que os alunos vao receber."></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="admin-notification-scope">Enviar para</label>
+          <select id="admin-notification-scope" class="form-control form-select">
+            <option value="geral">Todos os alunos</option>
+            <option value="grupos">Grupos especificos</option>
+            <option value="individual">Alunos especificos</option>
+          </select>
+        </div>
+
+        <section class="admin-notification-target admin-notification-target-hidden" data-admin-notification-panel="grupos">
+          <div class="admin-notification-target-head">
+            <strong>Grupos destinatarios</strong>
+            <span class="muted-copy">Selecione um ou mais grupos.</span>
+          </div>
+          <div class="admin-notification-option-grid">
+            ${groupOptions || `<div class="empty-state"><strong>Nenhum grupo cadastrado</strong></div>`}
+          </div>
+        </section>
+
+        <section class="admin-notification-target admin-notification-target-hidden" data-admin-notification-panel="individual">
+          <div class="admin-notification-target-head">
+            <strong>Alunos destinatarios</strong>
+            <span class="muted-copy">Selecione um ou mais alunos.</span>
+          </div>
+          <div class="admin-notification-option-grid admin-notification-student-grid">
+            ${studentOptions || `<div class="empty-state"><strong>Nenhum aluno cadastrado</strong></div>`}
+          </div>
+        </section>
+      </div>
+    `,
+    actions: [
+      { label: "Cancelar", className: "btn-secondary" },
+      {
+        label: "Enviar notificacao",
+        className: "btn-primary",
+        closeOnClick: false,
+        onClick: () => {
+          const titleField = window.document.querySelector("#admin-notification-title");
+          const messageField = window.document.querySelector("#admin-notification-message");
+          const scopeField = window.document.querySelector("#admin-notification-scope");
+          const title = titleField?.value?.trim() || "";
+          const message = messageField?.value?.trim() || "";
+          const scope = scopeField?.value || "geral";
+          const selectedGroups = Array.from(window.document.querySelectorAll("[data-admin-notification-group]:checked")).map((input) => input.value);
+          const selectedStudents = Array.from(window.document.querySelectorAll("[data-admin-notification-student]:checked")).map((input) => input.value);
+
+          if (!title) {
+            showToast("Informe o titulo da notificacao.", "error");
+            return;
+          }
+
+          if (!message) {
+            showToast("Escreva a mensagem da notificacao.", "error");
+            return;
+          }
+
+          if (scope === "grupos" && !selectedGroups.length) {
+            showToast("Selecione pelo menos um grupo.", "error");
+            return;
+          }
+
+          if (scope === "individual" && !selectedStudents.length) {
+            showToast("Selecione pelo menos um aluno.", "error");
+            return;
+          }
+
+          onConfirm({
+            title,
+            message,
+            scope,
+            groupCodes: selectedGroups,
+            studentIds: selectedStudents
+          });
+        }
+      }
+    ]
+  });
+
+  const scopeField = window.document.querySelector("#admin-notification-scope");
+  const panels = Array.from(window.document.querySelectorAll("[data-admin-notification-panel]"));
+  const syncPanels = () => {
+    const scope = scopeField?.value || "geral";
+    panels.forEach((panel) => {
+      panel.classList.toggle("admin-notification-target-hidden", panel.dataset.adminNotificationPanel !== scope);
+    });
+  };
+
+  scopeField?.addEventListener("change", syncPanels);
+  syncPanels();
+}
+
+function resolveAdminNotificationRecipients(payload, users) {
+  const students = users.filter((item) => item.role !== "admin");
+
+  if (payload.scope === "geral") {
+    return students;
+  }
+
+  if (payload.scope === "grupos") {
+    return students.filter((student) =>
+      payload.groupCodes.some((groupCode) => doesSerieBelongToGroup(student.serie, groupCode))
+    );
+  }
+
+  if (payload.scope === "individual") {
+    return students.filter((student) => payload.studentIds.includes(student.id));
+  }
+
+  return [];
+}
+
 function openStudentResultModal(simuladoId, userId) {
   const user = Storage.getUsers().find((item) => item.id === userId);
   const resultado = Storage.getResultado(simuladoId, userId);
@@ -1557,6 +1734,31 @@ function renderAdminView() {
       onToggleTheme: () => {
         setAdminTheme(state.adminTheme === "dark" ? "light" : "dark");
         renderAdminView();
+      },
+      onOpenAdminNotification: () => {
+        openAdminNotificationModal(users, groups, (payload) => {
+          const recipients = resolveAdminNotificationRecipients(payload, Storage.getUsers());
+
+          if (!recipients.length) {
+            showToast("Nenhum aluno encontrado para esse envio.", "error");
+            return;
+          }
+
+          const timestamp = new Date().toISOString();
+          recipients.forEach((recipient, index) => {
+            Storage.addNotification(recipient.id, {
+              id: `notif-admin-${Date.now()}-${index}-${recipient.id}`,
+              tipo: "primary",
+              titulo: payload.title,
+              texto: payload.message,
+              dataHora: timestamp,
+              origem: "admin"
+            });
+          });
+
+          showToast(`Notificacao enviada para ${recipients.length} aluno(s).`);
+          closeModal();
+        });
       },
       onCreateGroup: (formData) => {
         const code = formData.get("code")?.toString().trim();
