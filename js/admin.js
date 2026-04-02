@@ -161,13 +161,63 @@ function renderCardTools(items = []) {
   `;
 }
 
+function hexToRgba(hex, alpha = 1) {
+  const normalized = String(hex || "").replace("#", "").trim();
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    return `rgba(71, 85, 105, ${alpha})`;
+  }
+
+  const value = Number.parseInt(normalized, 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function getGroupMetaBySerie(serie, groups = []) {
+  const aliasMap = {
+    Desempregado: ["Desempregado", "NemNem"],
+    NemNem: ["NemNem", "Desempregado"],
+    EF: ["EF", "EFI", "EFII"],
+    EFI: ["EFI", "EF"],
+    EFII: ["EFII", "EF"],
+    EM: ["EM"],
+    ES: ["ES"],
+    Senior: ["Senior"]
+  };
+  const aliases = aliasMap[serie] || [serie];
+  const group = groups.find((item) => aliases.includes(item.code)) || null;
+
+  return {
+    label: group?.name || formatSerieLabel(serie || "Sem turma"),
+    color: group?.color || "#475569",
+    softColor: hexToRgba(group?.color || "#475569", 0.14)
+  };
+}
+
+function renderStudentGroupBadge(serie, groups) {
+  const meta = getGroupMetaBySerie(serie, groups);
+
+  return `
+    <span class="admin-student-group-badge" style="--group-color: ${meta.color}; --group-color-soft: ${meta.softColor};">
+      ${meta.label}
+    </span>
+  `;
+}
+
+function getStudentCardStyle(serie, groups) {
+  const meta = getGroupMetaBySerie(serie, groups);
+  return `--group-color: ${meta.color}; --group-color-soft: ${meta.softColor};`;
+}
+
 function renderSidebar(section) {
   const items = [
     { key: "home", label: "Home", icon: "home" },
     { key: "simulados", label: "Simulados", icon: "simulados" },
     { key: "ranking", label: "Ranking", icon: "ranking" },
     { key: "grupos", label: "Grupos", icon: "groups" },
-    { key: "usuarios", label: "Usuarios", icon: "users" },
+    { key: "alunos", label: "Alunos", icon: "users" },
     { key: "certificados", label: "Certificados", icon: "certificates" },
     { key: "documentos", label: "Documentos", icon: "documents" }
   ];
@@ -225,7 +275,7 @@ function renderTopHeader(section, theme) {
     simulados: { title: "Gerenciar simulados", description: "Criacao, importacao, publicacao e biblioteca de simulados." },
     ranking: { title: "Ranking", description: "Ordenacao por simulado com modal de desempenho individual." },
     grupos: { title: "Grupos de alunos", description: "Gerencie os grupos da plataforma e acompanhe a distribuicao da base." },
-    usuarios: { title: "Gerenciar usuarios", description: "Permissao de email, suspensao, banimento, troca de senha e perfil." },
+    alunos: { title: "Gerenciar alunos", description: "Permissao de email, suspensao, banimento, troca de senha e perfil." },
     certificados: { title: "Certificados", description: "Valide os certificados oficiais de participacao liberados para os alunos." },
     documentos: { title: "Documentos", description: "Centralize comprovantes, autorizacoes e validacoes dos participantes." }
   };
@@ -307,7 +357,7 @@ function renderHero(analytics) {
         <div class="admin-executive-item">Simulados separados em pagina propria para operacao editorial.</div>
         <div class="admin-executive-item">Ranking em pagina dedicada do admin, fora do painel do aluno.</div>
         <div class="admin-executive-item">Gestao de grupos com Fundamental I, Fundamental II, Ensino Medio e compatibilidade com conteudo legado.</div>
-        <div class="admin-executive-item">Usuarios em pagina independente com acoes administrativas.</div>
+        <div class="admin-executive-item">Alunos em pagina independente com acoes administrativas e identificacao visual por grupo.</div>
       </section>
     </section>
   `;
@@ -746,7 +796,26 @@ function renderGroupsPage(groups, users) {
                     <span class="badge ${group.active ? "badge-success" : "badge-warning"}">${group.active ? "Ativo" : "Inativo"}</span>
                   </div>
                   <h4 class="mt-4">${group.name}</h4>
+                  <div class="admin-group-color-preview">
+                    <span class="admin-student-group-badge" style="--group-color: ${group.color}; --group-color-soft: ${hexToRgba(group.color, 0.14)};">
+                      Cor do grupo
+                    </span>
+                  </div>
                   <p class="muted-copy mt-2">${count} aluno(s) vinculados</p>
+                  <div class="admin-group-color-field">
+                    <label class="form-label" for="group-color-${group.code}">Cor do grupo</label>
+                    <div class="admin-group-color-controls">
+                      <input
+                        id="group-color-${group.code}"
+                        class="admin-group-color-input"
+                        type="color"
+                        value="${group.color}"
+                        data-group-color="${group.code}"
+                        aria-label="Alterar cor do grupo ${group.name}"
+                      >
+                      <span class="muted-copy">${group.color}</span>
+                    </div>
+                  </div>
                   <button class="btn btn-secondary btn-sm mt-4" type="button" data-group-action="toggle" data-group-code="${group.code}">
                     ${group.active ? "Desativar" : "Ativar"}
                   </button>
@@ -761,7 +830,7 @@ function renderGroupsPage(groups, users) {
         <div class="card-header admin-lte-card-header">
           <div>
             <h3>Adicionar grupo</h3>
-            <p class="muted-copy">Cadastre novos grupos conforme as faixas oficiais da OBDIP 2026.</p>
+            <p class="muted-copy">Cadastre novos grupos conforme as faixas oficiais da OBDIP 2026 e defina a cor da marcacao visual.</p>
           </div>
           ${renderCardTools(["Cadastro"])}
         </div>
@@ -774,6 +843,10 @@ function renderGroupsPage(groups, users) {
             <div class="form-group">
               <label class="form-label" for="group-name">Nome do grupo</label>
               <input id="group-name" class="form-control" name="name" placeholder="Ex.: Fundamental I (4o e 5o ano)" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="group-color">Cor do grupo</label>
+              <input id="group-color" class="admin-group-color-input" type="color" name="color" value="#2563eb">
             </div>
           </div>
           <button class="btn btn-primary" type="submit">Adicionar grupo</button>
@@ -807,7 +880,7 @@ function getDocumentTypeLabel(tipo) {
   return labels[tipo] || tipo;
 }
 
-function renderDocumentsPage(users, documents) {
+function renderDocumentsPage(users, documents, groups) {
   const sortedDocuments = [...documents].sort(
     (a, b) => new Date(b.atualizadoEm || b.enviadoEm || 0) - new Date(a.atualizadoEm || a.enviadoEm || 0)
   );
@@ -882,12 +955,13 @@ function renderDocumentsPage(users, documents) {
                   const statusMeta = getDocumentStatusMeta(document.status);
 
                   return `
-                    <article class="admin-ga-list-card admin-lte-list-card">
+                    <article class="admin-ga-list-card admin-lte-list-card admin-student-card" style="${getStudentCardStyle(user?.serie, groups)}">
                       <div class="admin-ga-list-top">
                         <div>
                           <div class="tag-row">
                             <span class="badge badge-primary">${getDocumentTypeLabel(document.tipo)}</span>
                             <span class="badge ${statusMeta.badge}">${statusMeta.label}</span>
+                            ${user ? renderStudentGroupBadge(user.serie, groups) : ""}
                           </div>
                           <h4 class="mt-4">${document.nome}</h4>
                           <p class="muted-copy mt-2">${user?.nome || "Participante nao encontrado"} | ${formatSerieLabel(user?.serie || "Sem turma")}</p>
@@ -931,7 +1005,7 @@ function getAdminCertificateStatusMeta(status) {
   return meta[status] || { label: status || "Sem status", badge: "badge-muted" };
 }
 
-function renderCertificatesPage(certificates) {
+function renderCertificatesPage(certificates, groups) {
   const counters = {
     total: certificates.length,
     pendente: certificates.filter((item) => item.status === "pendente_validacao").length,
@@ -997,12 +1071,13 @@ function renderCertificatesPage(certificates) {
                   const statusMeta = getAdminCertificateStatusMeta(certificate.status);
 
                   return `
-                    <article class="admin-ga-list-card admin-lte-list-card">
+                    <article class="admin-ga-list-card admin-lte-list-card admin-student-card" style="${getStudentCardStyle(certificate.serie, groups)}">
                       <div class="admin-ga-list-top">
                         <div>
                           <div class="tag-row">
                             <span class="badge badge-primary">Participacao</span>
                             <span class="badge ${statusMeta.badge}">${statusMeta.label}</span>
+                            ${renderStudentGroupBadge(certificate.serie, groups)}
                           </div>
                           <h4 class="mt-4">${certificate.nome}</h4>
                           <p class="muted-copy mt-2">${certificate.email} | ${certificate.serieLabel}</p>
@@ -1032,24 +1107,27 @@ function renderCertificatesPage(certificates) {
   `;
 }
 
-function renderUsersPage(users) {
+function renderStudentsPage(users, groups) {
   return `
     <section class="admin-ga-surface admin-lte-card-surface">
       <div class="card-header admin-lte-card-header">
         <div>
-          <h3>Gerenciar usuarios</h3>
-          <p class="muted-copy">Permissao de email, suspensao, banimento, troca de senha e perfil.</p>
+          <h3>Gerenciar alunos</h3>
+          <p class="muted-copy">Permissao de email, suspensao, banimento, troca de senha e perfil dos participantes.</p>
         </div>
-        ${renderCardTools([`${users.length} usuarios`])}
+        ${renderCardTools([`${users.length} alunos`])}
       </div>
       <div class="card-body admin-stack">
         ${users
           .map(
             (user) => `
-              <article class="admin-ga-user-row">
+              <article class="admin-ga-user-row admin-student-card" style="${getStudentCardStyle(user.serie, groups)}">
                 <div class="flex items-center gap-4">
                   <div class="avatar">${getInitials(user.nome)}</div>
                   <div>
+                    <div class="tag-row mb-2">
+                      ${renderStudentGroupBadge(user.serie, groups)}
+                    </div>
                     <strong>${user.nome}</strong>
                     <p class="muted-copy">${user.email}</p>
                     <p class="muted-copy">${user.escola || "Escola nao informada"} | ${formatSerieLabel(user.serie || "Sem turma")}</p>
@@ -1164,9 +1242,9 @@ export function renderAdminDashboard(root, data, handlers) {
     simulados: renderSimuladosPage(simulados, activeGroups.length ? activeGroups : groups),
     ranking: renderRankingPage(simulados, rankingSimulado, ranking),
     grupos: renderGroupsPage(groups, users),
-    usuarios: renderUsersPage(users),
-    certificados: renderCertificatesPage(certificates),
-    documentos: renderDocumentsPage(users, documents)
+    alunos: renderStudentsPage(users, groups),
+    certificados: renderCertificatesPage(certificates, groups),
+    documentos: renderDocumentsPage(users, documents, groups)
   };
 
   root.innerHTML = `
@@ -1234,6 +1312,10 @@ export function renderAdminDashboard(root, data, handlers) {
 
   root.querySelectorAll("[data-group-action]").forEach((button) => {
     button.addEventListener("click", () => handlers.onGroupAction(button.dataset.groupAction, button.dataset.groupCode));
+  });
+
+  root.querySelectorAll("[data-group-color]").forEach((input) => {
+    input.addEventListener("change", () => handlers.onGroupColorChange(input.dataset.groupColor, input.value));
   });
 
   root.querySelectorAll("[data-document-action]").forEach((button) => {

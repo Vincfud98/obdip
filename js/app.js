@@ -52,17 +52,37 @@ const DOCUMENT_REJECTION_REASONS = [
   { value: "outro", label: "Outro motivo" }
 ];
 
+const DEFAULT_GROUP_COLORS = {
+  EFI: "#2563eb",
+  EFII: "#0ea5e9",
+  EM: "#f59e0b",
+  EF: "#7c3aed",
+  ES: "#10b981",
+  Senior: "#ef4444",
+  NemNem: "#64748b",
+  Desempregado: "#64748b"
+};
+
 const DEFAULT_ADMIN_GROUPS = [
-  { code: "EFI", name: "Fundamental I (4o e 5o ano)", active: true },
-  { code: "EFII", name: "Fundamental II (6o ao 9o ano)", active: true },
-  { code: "EM", name: "Ensino Medio", active: true },
-  { code: "EF", name: "Conteudo legado de Ensino Fundamental", active: true }
+  { code: "EFI", name: "Fundamental I (4o e 5o ano)", active: true, color: DEFAULT_GROUP_COLORS.EFI },
+  { code: "EFII", name: "Fundamental II (6o ao 9o ano)", active: true, color: DEFAULT_GROUP_COLORS.EFII },
+  { code: "EM", name: "Ensino Medio", active: true, color: DEFAULT_GROUP_COLORS.EM },
+  { code: "EF", name: "Conteudo legado de Ensino Fundamental", active: true, color: DEFAULT_GROUP_COLORS.EF }
 ];
+
+function normalizeAdminGroup(group, index = 0) {
+  const fallbackPalette = ["#2563eb", "#0ea5e9", "#f59e0b", "#7c3aed", "#10b981", "#ef4444", "#64748b"];
+
+  return {
+    ...group,
+    color: group.color || DEFAULT_GROUP_COLORS[group.code] || fallbackPalette[index % fallbackPalette.length]
+  };
+}
 
 function getAdminGroups() {
   const saved = JSON.parse(localStorage.getItem("obdip_admin_groups") || "null");
   if (!Array.isArray(saved) || !saved.length) {
-    return DEFAULT_ADMIN_GROUPS;
+    return DEFAULT_ADMIN_GROUPS.map((group, index) => normalizeAdminGroup(group, index));
   }
 
   const savedCodes = new Set(saved.map((group) => group.code));
@@ -75,11 +95,15 @@ function getAdminGroups() {
     !savedCodes.has("EFI") &&
     !savedCodes.has("EFII");
 
-  return isLegacyDefault ? DEFAULT_ADMIN_GROUPS : saved;
+  const sourceGroups = isLegacyDefault ? DEFAULT_ADMIN_GROUPS : saved;
+  return sourceGroups.map((group, index) => normalizeAdminGroup(group, index));
 }
 
 function saveAdminGroups(groups) {
-  localStorage.setItem("obdip_admin_groups", JSON.stringify(groups));
+  localStorage.setItem(
+    "obdip_admin_groups",
+    JSON.stringify(groups.map((group, index) => normalizeAdminGroup(group, index)))
+  );
 }
 
 function showView(name) {
@@ -1452,6 +1476,9 @@ function createSimuladoFromForm(formData) {
 
 function renderAdminView() {
   showView("admin");
+  if (state.adminSection === "usuarios") {
+    state.adminSection = "alunos";
+  }
   const users = Storage.getUsers();
   syncRequiredDocumentsForUsers(users);
   const documents = Storage.getDocuments();
@@ -1534,6 +1561,7 @@ function renderAdminView() {
       onCreateGroup: (formData) => {
         const code = formData.get("code")?.toString().trim();
         const name = formData.get("name")?.toString().trim();
+        const color = formData.get("color")?.toString().trim() || "#2563eb";
 
         if (!code || !name) {
           showToast("Preencha codigo e nome do grupo.", "error");
@@ -1547,7 +1575,7 @@ function renderAdminView() {
           return;
         }
 
-        const nextGroups = [...groupsSnapshot, { code: normalizedCode, name, active: true }];
+        const nextGroups = [...groupsSnapshot, { code: normalizedCode, name, active: true, color }];
         saveAdminGroups(nextGroups);
         state.adminSection = "grupos";
         showToast(`Grupo "${name}" adicionado com sucesso.`);
@@ -1560,6 +1588,16 @@ function renderAdminView() {
         );
         saveAdminGroups(nextGroups);
         state.adminSection = "grupos";
+        renderAdminView();
+      },
+      onGroupColorChange: (groupCode, color) => {
+        if (!groupCode || !color) return;
+        const nextGroups = getAdminGroups().map((group) =>
+          group.code === groupCode ? { ...group, color } : group
+        );
+        saveAdminGroups(nextGroups);
+        state.adminSection = "grupos";
+        showToast(`Cor do grupo ${groupCode} atualizada.`);
         renderAdminView();
       },
       onDocumentAction: (action, documentId) => {
@@ -1692,7 +1730,7 @@ function renderAdminView() {
       onUserAction: (action, userId) => {
         const user = Storage.getUsers().find((item) => item.id === userId);
         if (!user) {
-          showToast("Usuario nao encontrado.", "error");
+          showToast("Aluno nao encontrado.", "error");
           return;
         }
 
