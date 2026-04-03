@@ -212,6 +212,9 @@ const SIMULADOS_DATA = [
   }
 ];
 
+const EXAM_STORAGE_KEY = "obdip_exams";
+const INITIAL_SIMULADOS_DATA = JSON.parse(JSON.stringify(SIMULADOS_DATA));
+
 // ============================================================
 // E-BOOKS DE EXEMPLO
 // ============================================================
@@ -319,7 +322,156 @@ const ADMIN_USER = {
 // PERSISTÊNCIA COM LOCALSTORAGE
 // ============================================================
 
+function normalizeQuestion(question, index = 0) {
+  const rawOptions = Array.isArray(question.opcoes) && question.opcoes.length
+    ? question.opcoes
+    : [{ letra: "A", texto: "Opcao padrao" }];
+
+  return {
+    ...question,
+    id: question.id || `q-${Date.now()}-${index}`,
+    numero: question.numero || index + 1,
+    disciplina: question.disciplina || "Questao objetiva",
+    enunciado: question.enunciado || "<p>Questao sem enunciado.</p>",
+    comando: question.comando || "Assinale a alternativa correta:",
+    imagem: question.imagem || null,
+    opcoes: rawOptions
+      .map((option, optionIndex) => ({
+        letra: String(option.letra || String.fromCharCode(65 + optionIndex)).trim().toUpperCase(),
+        texto: String(option.texto || "").trim() || `Opcao ${optionIndex + 1}`
+      }))
+      .filter((option) => option.letra && option.texto),
+    gabarito: String(question.gabarito || rawOptions[0]?.letra || "A").trim().toUpperCase(),
+    comentario: question.comentario || "Comentario pedagogico nao informado."
+  };
+}
+
+function normalizeExam(exam = {}, index = 0) {
+  const tipoExame = exam.tipoExame === "prova" ? "prova" : "simulado";
+  const gabaritoModo = exam.gabaritoModo === "agendado" ? "agendado" : "manual";
+  const turmas = Array.isArray(exam.turmas) && exam.turmas.length ? exam.turmas : ["EM"];
+
+  return {
+    ...exam,
+    id: exam.id || `exam-${Date.now()}-${index}`,
+    nome: exam.nome || `Exame ${index + 1}`,
+    tipoExame,
+    turmas,
+    tempo: Number(exam.tempo || 90),
+    status: exam.status || "rascunho",
+    agendamento: exam.agendamento || null,
+    criadoEm: exam.criadoEm || new Date().toISOString(),
+    gabaritoModo,
+    gabaritoLiberado: Boolean(exam.gabaritoLiberado),
+    gabaritoLiberadoEm: exam.gabaritoLiberadoEm || null,
+    gabaritoAgendadoPara: gabaritoModo === "agendado" ? exam.gabaritoAgendadoPara || null : null,
+    questoes: (Array.isArray(exam.questoes) ? exam.questoes : []).map((question, questionIndex) =>
+      normalizeQuestion(question, questionIndex)
+    )
+  };
+}
+
+function syncExamCache(exams = []) {
+  const normalized = exams.map((exam, index) => normalizeExam(exam, index));
+  SIMULADOS_DATA.splice(0, SIMULADOS_DATA.length, ...normalized);
+  return SIMULADOS_DATA;
+}
+
+function applyExamAutomation(exam) {
+  const now = Date.now();
+  const nextExam = { ...normalizeExam(exam) };
+  let changed = false;
+
+  if (nextExam.status === "agendado" && nextExam.agendamento) {
+    const publicationTime = new Date(nextExam.agendamento).getTime();
+    if (!Number.isNaN(publicationTime) && now >= publicationTime) {
+      nextExam.status = "publicado";
+      changed = true;
+    }
+  }
+
+  if (!nextExam.gabaritoLiberado && nextExam.gabaritoModo === "agendado" && nextExam.gabaritoAgendadoPara) {
+    const answerKeyTime = new Date(nextExam.gabaritoAgendadoPara).getTime();
+    if (!Number.isNaN(answerKeyTime) && now >= answerKeyTime) {
+      nextExam.gabaritoLiberado = true;
+      nextExam.gabaritoLiberadoEm = nextExam.gabaritoAgendadoPara;
+      changed = true;
+    }
+  }
+
+  return { exam: nextExam, changed };
+}
+
+function ensureExamStore() {
+  const saved = JSON.parse(localStorage.getItem(EXAM_STORAGE_KEY) || "null");
+  const source = Array.isArray(saved) && saved.length ? saved : INITIAL_SIMULADOS_DATA;
+  let changed = !Array.isArray(saved) || !saved.length;
+  const processed = source.map((exam) => {
+    const { exam: nextExam, changed: examChanged } = applyExamAutomation(exam);
+    if (examChanged) changed = true;
+    return nextExam;
+  });
+
+  syncExamCache(processed);
+  if (changed) {
+    localStorage.setItem(EXAM_STORAGE_KEY, JSON.stringify(SIMULADOS_DATA));
+  }
+
+  return SIMULADOS_DATA;
+}
+
 const Storage = {
+  /** Retorna todos os exames cadastrados */
+  getExams() {
+    return ensureExamStore();
+  },
+
+  /** Salva todos os exames */
+  saveExams(exams) {
+    const synced = syncExamCache(exams);
+    localStorage.setItem(EXAM_STORAGE_KEY, JSON.stringify(synced));
+    return synced;
+  },
+
+  /** Busca exame por ID */
+  getExamById(examId) {
+    return this.getExams().find((item) => item.id === examId) || null;
+  },
+
+  /** Cria ou atualiza um exame */
+  saveExam(exam) {
+    const exams = [...this.getExams()];
+    const normalized = normalizeExam(exam, exams.length);
+    const index = exams.findIndex((item) => item.id === normalized.id);
+
+    if (index >= 0) {
+      exams[index] = normalized;
+    } else {
+      exams.unshift(normalized);
+    }
+
+    this.saveExams(exams);
+    return normalized;
+  },
+
+  /** Atualiza parcialmente um exame */
+  updateExam(examId, updates) {
+    const exams = [...this.getExams()];
+    const index = exams.findIndex((item) => item.id === examId);
+    if (index === -1) return null;
+
+    const nextExam = normalizeExam(
+      {
+        ...exams[index],
+        ...updates
+      },
+      index
+    );
+
+    exams[index] = nextExam;
+    this.saveExams(exams);
+    return nextExam;
+  },
   /** Retorna todos os usuários cadastrados */
   getUsers() {
     return JSON.parse(localStorage.getItem("obdip_users") || "[]");
@@ -545,7 +697,11 @@ const Storage = {
  * @returns {Object|null}
  */
 function getSimuladoById(id) {
-  return SIMULADOS_DATA.find(s => s.id === id) || null;
+  return Storage.getExamById(id);
+}
+
+function getExamById(id) {
+  return Storage.getExamById(id);
 }
 
 /**
@@ -568,11 +724,37 @@ function getTurmaAliases(turma) {
   return aliasMap[turma] || [turma];
 }
 
-function getSimuladosByTurma(turma) {
+function getExamsByTurma(turma, tipoExame = null) {
   const turmaAliases = getTurmaAliases(turma);
-  return SIMULADOS_DATA.filter(
-    s => s.status === "publicado" && (turmaAliases.some((alias) => s.turmas.includes(alias)) || s.turmas.includes("Todos"))
+  return Storage.getExams().filter(
+    (exam) =>
+      exam.status === "publicado" &&
+      (!tipoExame || exam.tipoExame === tipoExame) &&
+      (turmaAliases.some((alias) => exam.turmas.includes(alias)) || exam.turmas.includes("Todos"))
   );
+}
+
+function getSimuladosByTurma(turma) {
+  return getExamsByTurma(turma, "simulado");
+}
+
+function getExamTypeLabel(tipoExame) {
+  return tipoExame === "prova" ? "Prova" : "Simulado";
+}
+
+function isAnswerKeyReleased(exam) {
+  if (!exam) return false;
+
+  if (exam.gabaritoLiberado) {
+    return true;
+  }
+
+  if (exam.gabaritoModo === "agendado" && exam.gabaritoAgendadoPara) {
+    const releaseTime = new Date(exam.gabaritoAgendadoPara).getTime();
+    return !Number.isNaN(releaseTime) && Date.now() >= releaseTime;
+  }
+
+  return false;
 }
 
 /**
@@ -618,6 +800,9 @@ function calcularResultado(simulado, respostas) {
   return {
     simuladoId: simulado.id,
     simuladoNome: simulado.nome,
+    exameId: simulado.id,
+    exameNome: simulado.nome,
+    tipoExame: simulado.tipoExame || "simulado",
     total,
     acertos,
     erros,
@@ -630,6 +815,8 @@ function calcularResultado(simulado, respostas) {
 
 // Inicializa dados de demonstração se localStorage estiver vazio
 (function initDemoData() {
+  Storage.getExams();
+
   if (!Storage.getUsers().length) {
     const demoUsers = [
       {
@@ -707,6 +894,28 @@ function calcularResultado(simulado, respostas) {
   }
 })();
 
+(function ensureDemoProof() {
+  const exams = Storage.getExams();
+  if (!exams.length || exams.some((item) => item.tipoExame === "prova")) {
+    return;
+  }
+
+  const baseExam = exams[0];
+  Storage.saveExam({
+    ...JSON.parse(JSON.stringify(baseExam)),
+    id: "pro-001",
+    nome: "Prova Oficial OBDIP 2026 - Etapa Demonstrativa",
+    tipoExame: "prova",
+    status: "publicado",
+    agendamento: null,
+    gabaritoModo: "manual",
+    gabaritoLiberado: false,
+    gabaritoLiberadoEm: null,
+    gabaritoAgendadoPara: null,
+    criadoEm: new Date().toISOString()
+  });
+})();
+
 (function ensureDemoPdfDocument() {
   const documents = Storage.getDocuments();
   if (!documents.length || documents.some((item) => item.arquivoDataUrl || item.arquivoUrl)) {
@@ -729,6 +938,10 @@ export {
   EBOOKS_DATA,
   ADMIN_USER,
   Storage,
+  getExamById,
+  getExamsByTurma,
+  getExamTypeLabel,
+  isAnswerKeyReleased,
   getSimuladoById,
   getSimuladosByTurma,
   getEbooksByTurma,

@@ -1,6 +1,10 @@
 import { calcularResultado, Storage } from "./data.js";
 import { closeModal, openModal } from "./ui.js";
 
+function getExamLabel(simulado) {
+  return simulado?.tipoExame === "prova" ? "prova" : "simulado";
+}
+
 function formatTime(totalSeconds) {
   const safeSeconds = Math.max(totalSeconds, 0);
   const hours = String(Math.floor(safeSeconds / 3600)).padStart(2, "0");
@@ -144,11 +148,12 @@ export function mountSimulado(root, { simulado, user, onBack, onFinish }) {
   const openFinishModal = () => {
     const answered = getAnsweredCount();
     const unanswered = simulado.questoes.length - answered;
+    const examLabel = getExamLabel(simulado);
 
     openModal({
-      title: "Finalizar simulado",
+      title: `Finalizar ${examLabel}`,
       body: `
-        <p>Confirme para encerrar a prova e calcular o desempenho imediatamente.</p>
+        <p>Confirme para encerrar ${examLabel === "prova" ? "a prova" : "o simulado"} e calcular o desempenho imediatamente.</p>
         <div class="modal-terminar-stats">
           <article class="modal-stat answered">
             <div class="num">${answered}</div>
@@ -165,7 +170,7 @@ export function mountSimulado(root, { simulado, user, onBack, onFinish }) {
         </div>
       `,
       actions: [
-        { label: "Continuar prova", className: "btn-secondary" },
+        { label: `Continuar ${examLabel}`, className: "btn-secondary" },
         { label: "Terminar agora", className: "btn-error", onClick: finishSimulado }
       ]
     });
@@ -317,6 +322,7 @@ export function mountSimulado(root, { simulado, user, onBack, onFinish }) {
                 Voltar
               </button>
               <div>
+                <div class="student-eyebrow">${simulado.tipoExame === "prova" ? "Prova" : "Simulado"}</div>
                 <div class="simulado-title">${simulado.nome}</div>
                 <small class="text-muted">
                   ${state.viewMode === "rolagem" ? "Rolagem continua com todas as questoes na mesma tela." : "Questao unica com navegacao lateral e salvamento automatico."}

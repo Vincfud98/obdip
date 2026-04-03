@@ -3,9 +3,13 @@ import {
   EBOOKS_DATA,
   SIMULADOS_DATA,
   Storage,
+  getExamById,
+  getExamTypeLabel,
+  getExamsByTurma,
   getEbooksByTurma,
   getSimuladoById,
-  getSimuladosByTurma
+  getSimuladosByTurma,
+  isAnswerKeyReleased
 } from "./data.js";
 import { renderLanding } from "./auth.js";
 import { renderStudentDashboard } from "./dashboard.js";
@@ -104,6 +108,54 @@ function saveAdminGroups(groups) {
     "obdip_admin_groups",
     JSON.stringify(groups.map((group, index) => normalizeAdminGroup(group, index)))
   );
+}
+
+function getExamSectionKey(examOrType) {
+  const type = typeof examOrType === "string" ? examOrType : examOrType?.tipoExame;
+  return type === "prova" ? "provas" : "simulados";
+}
+
+function getExamActionLabel(examOrType) {
+  return getExamSectionKey(examOrType) === "provas" ? "prova" : "simulado";
+}
+
+function enhanceResultWithExam(resultado, examMap = new Map()) {
+  if (!resultado) return null;
+  const exam = examMap.get(resultado.simuladoId || resultado.exameId) || null;
+  const tipoExame = resultado.tipoExame || exam?.tipoExame || "simulado";
+
+  return {
+    ...resultado,
+    exameId: resultado.exameId || resultado.simuladoId,
+    exameNome: resultado.exameNome || resultado.simuladoNome,
+    tipoExame,
+    gabaritoLiberado: isAnswerKeyReleased(exam),
+    exam
+  };
+}
+
+function getExamAnswerKeyStatus(exam) {
+  if (isAnswerKeyReleased(exam)) {
+    return {
+      label: "Gabarito liberado",
+      tone: "success",
+      detail: exam.gabaritoLiberadoEm ? formatDateTime(exam.gabaritoLiberadoEm) : "Disponivel agora"
+    };
+  }
+
+  if (exam.gabaritoModo === "agendado" && exam.gabaritoAgendadoPara) {
+    return {
+      label: "Gabarito agendado",
+      tone: "warning",
+      detail: formatDateTime(exam.gabaritoAgendadoPara)
+    };
+  }
+
+  return {
+    label: "Liberacao manual",
+    tone: "neutral",
+    detail: "Aguardando equipe OBDIP"
+  };
 }
 
 function showView(name) {
@@ -575,7 +627,7 @@ function openStudentCertificateModal(user, certificate) {
   });
 }
 
-function getNotifications(user, simulados, resultados) {
+function getNotifications(user, exames, resultados) {
   const latest = getLatestHistorico(user.id);
   const inboxNotifications = Storage.getNotificationsByUser(user.id).map((item) => ({
     id: item.id,
@@ -593,12 +645,12 @@ function getNotifications(user, simulados, resultados) {
       tempo: "Agora"
     },
     {
-      id: `notif-simulado-${simulados[0]?.id || "nenhum"}`,
+      id: `notif-exame-${exames[0]?.id || "nenhum"}`,
       tipo: "warning",
-      titulo: "Simulado disponivel",
-      texto: simulados[0]
-        ? `${simulados[0].nome} esta liberado com visualizacao unica e por rolagem.`
-        : "Nenhum simulado novo foi publicado ainda.",
+      titulo: "Exame disponivel",
+      texto: exames[0]
+        ? `${exames[0].nome} ja esta liberado na sua area de provas e simulados.`
+        : "Nenhum novo exame foi publicado ainda.",
       tempo: "Hoje"
     }
   ];
@@ -617,8 +669,8 @@ function getNotifications(user, simulados, resultados) {
     items.push({
       id: `notif-primeira-prova-${user.id}`,
       tipo: "muted",
-      titulo: "Primeira prova",
-      texto: "Finalize seu primeiro simulado para liberar a pagina de desempenho e certificados.",
+      titulo: "Primeiro exame",
+      texto: "Finalize sua primeira prova ou seu primeiro simulado para liberar os resultados detalhados e os certificados.",
       tempo: "Lembrete"
     });
   }
@@ -627,17 +679,20 @@ function getNotifications(user, simulados, resultados) {
 }
 
 function getStudentData(user) {
-  const simulados = getSimuladosByTurma(user.serie);
+  const exames = getExamsByTurma(user.serie);
+  const examMap = new Map(exames.map((exam) => [exam.id, exam]));
+  const simulados = exames.filter((exam) => exam.tipoExame !== "prova");
+  const provas = exames.filter((exam) => exam.tipoExame === "prova");
   const ebooks = getEbooksByTurma(user.serie);
   const documents = Storage.getDocumentsByUser(user.id)
     .sort((a, b) => new Date(b.atualizadoEm || b.enviadoEm || 0) - new Date(a.atualizadoEm || a.enviadoEm || 0));
-  const resultados = simulados.map((simulado) => Storage.getResultado(simulado.id, user.id));
+  const resultados = exames.map((exam) => enhanceResultWithExam(Storage.getResultado(exam.id, user.id), examMap));
   const selectedResultadoId =
     state.selectedResultadoId ||
     resultados.find(Boolean)?.simuladoId ||
-    simulados[0]?.id ||
+    exames[0]?.id ||
     null;
-  const notifications = getNotifications(user, simulados, resultados);
+  const notifications = getNotifications(user, exames, resultados);
   const readNotificationIds = Storage.getReadNotificationIds(user.id);
   const unreadNotificationCount = notifications.filter((item) => !readNotificationIds.includes(item.id)).length;
   const certificates = getCertificates(user, resultados);
@@ -645,13 +700,15 @@ function getStudentData(user) {
   return {
     documents,
     ebooks,
+    exames,
     simulados,
+    provas,
     resultados,
     notifications,
     unreadNotificationCount,
     certificates,
     resultadoSelecionado: selectedResultadoId
-      ? Storage.getResultado(selectedResultadoId, user.id)
+      ? enhanceResultWithExam(Storage.getResultado(selectedResultadoId, user.id), examMap)
       : null
   };
 }
@@ -1025,10 +1082,15 @@ function renderStudentView() {
   showView("student");
   const user = state.currentUser;
 
+  if (state.studentSection === "desempenho") {
+    state.studentSection = "simulados";
+  }
+
   if (state.studentSection === "notificacoes") {
-    const currentSimulados = getSimuladosByTurma(user.serie);
-    const currentResults = currentSimulados.map((simulado) => Storage.getResultado(simulado.id, user.id));
-    const currentNotifications = getNotifications(user, currentSimulados, currentResults);
+    const currentExams = getExamsByTurma(user.serie);
+    const currentExamMap = new Map(currentExams.map((exam) => [exam.id, exam]));
+    const currentResults = currentExams.map((exam) => enhanceResultWithExam(Storage.getResultado(exam.id, user.id), currentExamMap));
+    const currentNotifications = getNotifications(user, currentExams, currentResults);
     Storage.markNotificationsAsRead(
       user.id,
       currentNotifications.map((item) => item.id)
@@ -1051,9 +1113,9 @@ function renderStudentView() {
         renderStudentView();
       },
       onStartSimulado: (simuladoId) => {
-        const simulado = getSimuladoById(simuladoId);
+        const simulado = getExamById(simuladoId) || getSimuladoById(simuladoId);
         if (!simulado) {
-          showToast("Nao foi possivel abrir esse simulado.", "error");
+          showToast("Nao foi possivel abrir esse exame.", "error");
           return;
         }
 
@@ -1073,21 +1135,24 @@ function renderStudentView() {
           onFinish: (resultado) => {
             simuladoCleanup = null;
             state.selectedResultadoId = resultado.simuladoId;
-            state.studentSection = "desempenho";
-            showToast("Simulado finalizado. A pagina de desempenho ja esta disponivel.");
+            state.studentSection = getExamSectionKey(simulado);
+            showToast(
+              `${getExamTypeLabel(simulado.tipoExame)} finalizado. O resultado ja esta disponivel na pagina de ${getExamSectionKey(simulado)}.`
+            );
             showView("student");
             renderStudentView();
           }
         });
       },
       onViewResult: (simuladoId) => {
+        const exam = getExamById(simuladoId);
         state.selectedResultadoId = simuladoId;
-        state.studentSection = "desempenho";
+        state.studentSection = getExamSectionKey(exam);
         renderStudentView();
       },
       onDownloadEbook: (ebookId) => {
         const ebook = EBOOKS_DATA.find((item) => item.id === ebookId);
-        showToast(`Download simulado de "${ebook?.titulo || "e-book"}".`);
+        showToast(`Download de "${ebook?.titulo || "e-book"}" iniciado.`);
       },
       onOpenCertificate: (certificateId) => {
         const certificate = data.certificates.find((item) => item.id === certificateId);
@@ -1506,6 +1571,7 @@ function resolveAdminNotificationRecipients(payload, users) {
 function openStudentResultModal(simuladoId, userId) {
   const user = Storage.getUsers().find((item) => item.id === userId);
   const resultado = Storage.getResultado(simuladoId, userId);
+  const exam = getExamById(simuladoId);
 
   if (!user || !resultado) {
     showToast("Nao foi possivel abrir o desempenho desse aluno.", "error");
@@ -1519,7 +1585,7 @@ function openStudentResultModal(simuladoId, userId) {
       <div class="admin-stack">
         <div class="info-callout">
           <strong>Resumo</strong>
-          <p class="muted-copy"><strong>Simulado:</strong> ${resultado.simuladoNome}</p>
+          <p class="muted-copy"><strong>${getExamTypeLabel(exam?.tipoExame)}:</strong> ${resultado.exameNome || resultado.simuladoNome}</p>
           <p class="muted-copy"><strong>Percentual:</strong> ${resultado.percentual}%</p>
           <p class="muted-copy"><strong>Acertos:</strong> ${resultado.acertos}</p>
           <p class="muted-copy"><strong>Enviado em:</strong> ${formatDateTime(resultado.dataHora)}</p>
@@ -1565,15 +1631,165 @@ function mutateUserStatus(userId, status) {
   return users[index];
 }
 
+function parseOptionsText(rawOptions = "") {
+  return String(rawOptions)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const [letra, ...rest] = line.split("|");
+      return {
+        letra: String(letra || String.fromCharCode(65 + index)).trim().toUpperCase(),
+        texto: rest.join("|").trim()
+      };
+    })
+    .filter((item) => item.letra && item.texto);
+}
+
+function serializeQuestionOptions(options = []) {
+  return options.map((option) => `${option.letra}|${option.texto}`).join("\n");
+}
+
+function getQuestionEditorMarkup(question, index) {
+  const questionId = question.id || `q-${Date.now()}-${index}`;
+
+  return `
+    <article class="admin-exam-question-card" data-question-item data-question-id="${questionId}">
+      <div class="student-card-head">
+        <div>
+          <span class="student-eyebrow">Questao ${index + 1}</span>
+          <h3>Editor da questao</h3>
+        </div>
+        <button class="btn btn-secondary btn-sm" type="button" data-remove-question="${questionId}">
+          Remover
+        </button>
+      </div>
+
+      <div class="inline-fields mt-4">
+        <div class="form-group">
+          <label class="form-label">Disciplina</label>
+          <input class="form-control" type="text" data-question-field="disciplina" value="${escapeHtml(question.disciplina || "")}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Gabarito</label>
+          <input class="form-control" type="text" maxlength="3" data-question-field="gabarito" value="${escapeHtml(question.gabarito || "A")}">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Enunciado</label>
+        <textarea class="form-control" rows="5" data-question-field="enunciado">${escapeHtml(String(question.enunciado || "").replace(/<p>|<\/p>/g, ""))}</textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Comando</label>
+        <input class="form-control" type="text" data-question-field="comando" value="${escapeHtml(question.comando || "")}">
+      </div>
+
+      <div class="inline-fields">
+        <div class="form-group">
+          <label class="form-label">Imagem (URL)</label>
+          <input class="form-control" type="text" data-question-field="imagem-src" value="${escapeHtml(question.imagem?.src || "")}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Texto alternativo</label>
+          <input class="form-control" type="text" data-question-field="imagem-alt" value="${escapeHtml(question.imagem?.alt || "")}">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Legenda da imagem</label>
+        <input class="form-control" type="text" data-question-field="imagem-legenda" value="${escapeHtml(question.imagem?.legenda || "")}">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Alternativas</label>
+        <textarea class="form-control" rows="6" data-question-field="opcoes">${escapeHtml(serializeQuestionOptions(question.opcoes || []))}</textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Comentario pedagogico</label>
+        <textarea class="form-control" rows="4" data-question-field="comentario">${escapeHtml(question.comentario || "")}</textarea>
+      </div>
+    </article>
+  `;
+}
+
+function buildEmptyQuestion(index = 0) {
+  return {
+    id: `q-${Date.now()}-${index}`,
+    numero: index + 1,
+    disciplina: "Questao objetiva",
+    enunciado: "",
+    comando: "Assinale a alternativa correta:",
+    imagem: null,
+    opcoes: [
+      { letra: "A", texto: "Opcao A" },
+      { letra: "B", texto: "Opcao B" },
+      { letra: "C", texto: "Opcao C" },
+      { letra: "D", texto: "Opcao D" }
+    ],
+    gabarito: "A",
+    comentario: ""
+  };
+}
+
+function collectQuestionsFromEditor(container) {
+  const blocks = Array.from(container.querySelectorAll("[data-question-item]"));
+  return blocks.map((block, index) => {
+    const questionId = block.dataset.questionId || `q-${Date.now()}-${index}`;
+    const disciplina = block.querySelector('[data-question-field="disciplina"]')?.value?.trim() || "Questao objetiva";
+    const enunciadoRaw = block.querySelector('[data-question-field="enunciado"]')?.value?.trim() || "";
+    const comando = block.querySelector('[data-question-field="comando"]')?.value?.trim() || "Assinale a alternativa correta:";
+    const imagemSrc = block.querySelector('[data-question-field="imagem-src"]')?.value?.trim() || "";
+    const imagemAlt = block.querySelector('[data-question-field="imagem-alt"]')?.value?.trim() || "";
+    const imagemLegenda = block.querySelector('[data-question-field="imagem-legenda"]')?.value?.trim() || "";
+    const optionsText = block.querySelector('[data-question-field="opcoes"]')?.value || "";
+    const opcoes = parseOptionsText(optionsText);
+    const gabarito = block.querySelector('[data-question-field="gabarito"]')?.value?.trim().toUpperCase() || opcoes[0]?.letra || "A";
+    const comentario = block.querySelector('[data-question-field="comentario"]')?.value?.trim() || "";
+
+    if (!enunciadoRaw) {
+      throw new Error(`A questao ${index + 1} precisa ter enunciado.`);
+    }
+
+    if (!opcoes.length) {
+      throw new Error(`A questao ${index + 1} precisa ter pelo menos uma alternativa.`);
+    }
+
+    return {
+      id: questionId,
+      numero: index + 1,
+      disciplina,
+      enunciado: `<p>${enunciadoRaw}</p>`,
+      comando,
+      imagem: imagemSrc
+        ? {
+            src: imagemSrc,
+            alt: imagemAlt || "Imagem da questao",
+            legenda: imagemLegenda || ""
+          }
+        : null,
+      opcoes,
+      gabarito,
+      comentario: comentario || "Comentario pedagogico nao informado."
+    };
+  });
+}
+
 function createSimuladoFromForm(formData) {
   const nome = formData.get("nome")?.toString().trim();
   const turma = formData.get("turma")?.toString();
   const tempo = Number(formData.get("tempo") || 90);
+  const tipoExame = formData.get("tipoExame")?.toString() === "prova" ? "prova" : "simulado";
   const enunciado = formData.get("enunciado")?.toString().trim();
   const comando = formData.get("comando")?.toString().trim() || "Assinale a alternativa correta:";
   const imagem = formData.get("imagem")?.toString().trim();
-  const tipo = formData.get("tipo")?.toString() || "A-E";
-  const discursiva = formData.get("discursiva")?.toString().trim();
+  const disciplina = formData.get("disciplina")?.toString().trim() || "Questao objetiva";
+  const comentario = formData.get("comentario")?.toString().trim() || "Comentario pedagogico inicial para esta questao criada no painel admin.";
+  const gabarito = formData.get("gabarito")?.toString().trim().toUpperCase() || "A";
+  const gabaritoModo = formData.get("gabaritoModo")?.toString() === "agendado" ? "agendado" : "manual";
+  const gabaritoAgendadoPara = formData.get("gabaritoAgendadoPara")?.toString() || null;
   const agendamento = formData.get("agendamento")?.toString() || null;
   const rawOpcoes = formData.get("opcoes")?.toString().trim() || "";
 
@@ -1581,74 +1797,239 @@ function createSimuladoFromForm(formData) {
     throw new Error("Dados principais obrigatorios");
   }
 
-  const opcoes = rawOpcoes
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [letra, ...rest] = line.split("|");
-      return {
-        letra: (letra || "").trim().toUpperCase(),
-        texto: rest.join("|").trim()
-      };
-    })
-    .filter((item) => item.letra && item.texto);
-
-  const questoes = [];
-
-  if (enunciado) {
-    questoes.push({
-      id: `q-${Date.now()}`,
-      numero: 1,
-      disciplina: "Questao objetiva",
-      enunciado: `<p>${enunciado}</p>`,
-      comando,
-      imagem: imagem
-        ? {
-            src: imagem,
-            alt: "Imagem da questao",
-            legenda: "Imagem vinculada pelo admin"
-          }
-        : null,
-      opcoes: opcoes.length
-        ? opcoes
-        : [
-            { letra: "A", texto: "Opcao A" },
-            { letra: "B", texto: "Opcao B" },
-            { letra: "C", texto: "Opcao C" },
-            { letra: tipo === "C-E" ? "E" : "D", texto: tipo === "C-E" ? "Opcao E" : "Opcao D" }
-          ],
-      gabarito: opcoes[0]?.letra || "A",
-      comentario: "Comentario pedagogico inicial para esta questao criada no painel admin."
-    });
+  if (!enunciado) {
+    throw new Error("Informe pelo menos uma questao para o exame.");
   }
 
-  if (discursiva) {
-    questoes.push({
-      id: `q-${Date.now()}-disc`,
-      numero: questoes.length + 1,
-      disciplina: "Questao discursiva",
-      enunciado: `<p>${discursiva}</p>`,
-      comando: "Resposta discursiva",
-      imagem: null,
-      opcoes: [
-        { letra: "A", texto: "Campo reservado para avaliacao manual." }
-      ],
-      gabarito: "A",
-      comentario: "Esta questao discursiva esta representada em formato simplificado nesta demo."
-    });
+  if (agendamento && Number.isNaN(new Date(agendamento).getTime())) {
+    throw new Error("Informe uma data valida para a publicacao.");
   }
+
+  if (gabaritoModo === "agendado" && !gabaritoAgendadoPara) {
+    throw new Error("Informe a data da liberacao automatica do gabarito.");
+  }
+
+  const opcoes = parseOptionsText(rawOpcoes);
 
   return {
-    id: `sim-${Date.now()}`,
+    id: `${tipoExame === "prova" ? "pro" : "sim"}-${Date.now()}`,
     nome,
+    tipoExame,
     turmas: [turma],
     tempo,
     status: agendamento ? "agendado" : "rascunho",
     agendamento,
     criadoEm: new Date().toISOString(),
-    questoes
+    gabaritoModo,
+    gabaritoLiberado: false,
+    gabaritoLiberadoEm: null,
+    gabaritoAgendadoPara: gabaritoModo === "agendado" ? gabaritoAgendadoPara : null,
+    questoes: [
+      {
+        id: `q-${Date.now()}`,
+        numero: 1,
+        disciplina,
+        enunciado: `<p>${enunciado}</p>`,
+        comando,
+        imagem: imagem
+          ? {
+              src: imagem,
+              alt: "Imagem da questao",
+              legenda: "Imagem vinculada pelo admin"
+            }
+          : null,
+        opcoes: opcoes.length
+          ? opcoes
+          : [
+              { letra: "A", texto: "Opcao A" },
+              { letra: "B", texto: "Opcao B" },
+              { letra: "C", texto: "Opcao C" },
+              { letra: "D", texto: "Opcao D" }
+            ],
+        gabarito,
+        comentario
+      }
+    ]
   };
+}
+
+function openExamEditorModal(exam, groups, onSave) {
+  const safeExam = exam || {
+    id: `exam-${Date.now()}`,
+    nome: "",
+    tipoExame: "simulado",
+    turmas: [groups[0]?.code || "EM"],
+    tempo: 90,
+    status: "rascunho",
+    agendamento: null,
+    criadoEm: new Date().toISOString(),
+    gabaritoModo: "manual",
+    gabaritoLiberado: false,
+    gabaritoLiberadoEm: null,
+    gabaritoAgendadoPara: null,
+    questoes: [buildEmptyQuestion(0)]
+  };
+  const questionMarkup = (safeExam.questoes?.length ? safeExam.questoes : [buildEmptyQuestion(0)])
+    .map((question, index) => getQuestionEditorMarkup(question, index))
+    .join("");
+
+  openModal({
+    title: `Editar ${getExamTypeLabel(safeExam.tipoExame)}`,
+    size: "modal-lg",
+    body: `
+      <div class="admin-stack admin-exam-editor">
+        <div class="inline-fields">
+          <div class="form-group">
+            <label class="form-label" for="admin-edit-exam-name">Nome</label>
+            <input id="admin-edit-exam-name" class="form-control" type="text" value="${escapeHtml(safeExam.nome || "")}">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="admin-edit-exam-type">Tipo de exame</label>
+            <select id="admin-edit-exam-type" class="form-control form-select">
+              <option value="simulado" ${safeExam.tipoExame === "simulado" ? "selected" : ""}>Simulado</option>
+              <option value="prova" ${safeExam.tipoExame === "prova" ? "selected" : ""}>Prova</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="inline-fields">
+          <div class="form-group">
+            <label class="form-label" for="admin-edit-exam-group">Grupo / turma</label>
+            <select id="admin-edit-exam-group" class="form-control form-select">
+              ${groups.map((group) => `<option value="${group.code}" ${safeExam.turmas?.includes(group.code) ? "selected" : ""}>${group.name}</option>`).join("")}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="admin-edit-exam-time">Tempo</label>
+            <input id="admin-edit-exam-time" class="form-control" type="number" min="15" value="${Number(safeExam.tempo || 90)}">
+          </div>
+        </div>
+
+        <div class="inline-fields">
+          <div class="form-group">
+            <label class="form-label" for="admin-edit-exam-status">Publicacao</label>
+            <select id="admin-edit-exam-status" class="form-control form-select">
+              <option value="rascunho" ${safeExam.status === "rascunho" ? "selected" : ""}>Rascunho</option>
+              <option value="publicado" ${safeExam.status === "publicado" ? "selected" : ""}>Publicado</option>
+              <option value="agendado" ${safeExam.status === "agendado" ? "selected" : ""}>Agendado</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="admin-edit-exam-publication">Agendar publicacao</label>
+            <input id="admin-edit-exam-publication" class="form-control" type="datetime-local" value="${safeExam.agendamento || ""}">
+          </div>
+        </div>
+
+        <div class="inline-fields">
+          <div class="form-group">
+            <label class="form-label" for="admin-edit-answer-key-mode">Liberacao do gabarito</label>
+            <select id="admin-edit-answer-key-mode" class="form-control form-select">
+              <option value="manual" ${safeExam.gabaritoModo === "manual" ? "selected" : ""}>Manual</option>
+              <option value="agendado" ${safeExam.gabaritoModo === "agendado" ? "selected" : ""}>Agendado</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="admin-edit-answer-key-date">Data de liberacao</label>
+            <input id="admin-edit-answer-key-date" class="form-control" type="datetime-local" value="${safeExam.gabaritoAgendadoPara || ""}">
+          </div>
+        </div>
+
+        <div class="info-callout">
+          <strong>Status atual do gabarito</strong>
+          <p class="muted-copy">${getExamAnswerKeyStatus(safeExam).label} - ${getExamAnswerKeyStatus(safeExam).detail}</p>
+        </div>
+
+        <section class="admin-stack" data-question-editor-list>
+          ${questionMarkup}
+        </section>
+
+        <button class="btn btn-secondary" type="button" data-add-question>Adicionar questao</button>
+      </div>
+    `,
+    actions: [
+      { label: "Cancelar", className: "btn-secondary" },
+      {
+        label: "Salvar alteracoes",
+        className: "btn-primary",
+        closeOnClick: false,
+        onClick: () => {
+          try {
+            const nameField = window.document.querySelector("#admin-edit-exam-name");
+            const typeField = window.document.querySelector("#admin-edit-exam-type");
+            const groupField = window.document.querySelector("#admin-edit-exam-group");
+            const timeField = window.document.querySelector("#admin-edit-exam-time");
+            const statusField = window.document.querySelector("#admin-edit-exam-status");
+            const publicationField = window.document.querySelector("#admin-edit-exam-publication");
+            const answerKeyModeField = window.document.querySelector("#admin-edit-answer-key-mode");
+            const answerKeyDateField = window.document.querySelector("#admin-edit-answer-key-date");
+            const questionList = window.document.querySelector("[data-question-editor-list]");
+
+            const nome = nameField?.value?.trim() || "";
+            const tipoExame = typeField?.value === "prova" ? "prova" : "simulado";
+            const turma = groupField?.value || "";
+            const tempo = Number(timeField?.value || 90);
+            const status = statusField?.value || "rascunho";
+            const agendamento = publicationField?.value || null;
+            const gabaritoModo = answerKeyModeField?.value === "agendado" ? "agendado" : "manual";
+            const gabaritoAgendadoPara = gabaritoModo === "agendado" ? answerKeyDateField?.value || null : null;
+            const questoes = collectQuestionsFromEditor(questionList);
+
+            if (!nome || !turma) {
+              throw new Error("Preencha nome e grupo do exame.");
+            }
+
+            if (status === "agendado" && !agendamento) {
+              throw new Error("Informe a data da publicacao agendada.");
+            }
+
+            if (gabaritoModo === "agendado" && !gabaritoAgendadoPara) {
+              throw new Error("Informe a data da liberacao automatica do gabarito.");
+            }
+
+            onSave({
+              ...safeExam,
+              nome,
+              tipoExame,
+              turmas: [turma],
+              tempo,
+              status,
+              agendamento: status === "agendado" ? agendamento : null,
+              gabaritoModo,
+              gabaritoAgendadoPara,
+              questoes
+            });
+            closeModal();
+          } catch (error) {
+            showToast(error.message || "Nao foi possivel salvar o exame.", "error");
+          }
+        }
+      }
+    ]
+  });
+
+  const questionList = window.document.querySelector("[data-question-editor-list]");
+  const addQuestionButton = window.document.querySelector("[data-add-question]");
+
+  const bindQuestionEditorActions = () => {
+    window.document.querySelectorAll("[data-remove-question]").forEach((button) => {
+      button.onclick = () => {
+        const card = button.closest("[data-question-item]");
+        if (questionList?.children.length <= 1) {
+          showToast("O exame precisa ter pelo menos uma questao.", "error");
+          return;
+        }
+        card?.remove();
+      };
+    });
+  };
+
+  addQuestionButton?.addEventListener("click", () => {
+    const nextIndex = questionList?.children.length || 0;
+    questionList?.insertAdjacentHTML("beforeend", getQuestionEditorMarkup(buildEmptyQuestion(nextIndex), nextIndex));
+    bindQuestionEditorActions();
+  });
+
+  bindQuestionEditorActions();
 }
 
 function renderAdminView() {
@@ -1656,20 +2037,24 @@ function renderAdminView() {
   if (state.adminSection === "usuarios") {
     state.adminSection = "alunos";
   }
+  if (state.adminSection === "simulados") {
+    state.adminSection = "exames";
+  }
   const users = Storage.getUsers();
   syncRequiredDocumentsForUsers(users);
   const documents = Storage.getDocuments();
   const certificates = getAdminCertificateEntries(users);
   const historico = users.flatMap((user) => Storage.getHistorico(user.id));
   const ultimoResultado = historico.sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora))[0];
-  const rankingId = state.adminRankingSimuladoId || SIMULADOS_DATA[0]?.id || null;
+  const exams = Storage.getExams();
+  const rankingId = state.adminRankingSimuladoId || exams[0]?.id || null;
   const groups = getAdminGroups();
 
   renderAdminDashboard(
     roots.admin,
     {
       users,
-      simulados: SIMULADOS_DATA,
+      simulados: exams,
       historico,
       documents,
       certificates,
@@ -1700,13 +2085,13 @@ function renderAdminView() {
       onCreateSimulado: (formData) => {
         try {
           const simulado = createSimuladoFromForm(formData);
-          SIMULADOS_DATA.unshift(simulado);
+          Storage.saveExam(simulado);
           state.adminRankingSimuladoId = simulado.id;
-          state.adminSection = "simulados";
-          showToast(`Simulado "${simulado.nome}" criado com sucesso.`);
+          state.adminSection = "exames";
+          showToast(`${getExamTypeLabel(simulado.tipoExame)} "${simulado.nome}" criado com sucesso.`);
           renderAdminView();
         } catch (error) {
-          showToast("Revise os dados obrigatorios do simulado.", "error");
+          showToast(error.message || "Revise os dados obrigatorios do exame.", "error");
         }
       },
       onImportJson: (formData) => {
@@ -1910,20 +2295,55 @@ function renderAdminView() {
         renderAdminView();
       },
       onSimuladoAction: (action, simuladoId) => {
-        const simulado = SIMULADOS_DATA.find((item) => item.id === simuladoId);
+        const simulado = Storage.getExamById(simuladoId);
         if (!simulado) {
-          showToast("Simulado nao encontrado.", "error");
+          showToast("Exame nao encontrado.", "error");
           return;
         }
 
-        if (action === "publicar") simulado.status = "publicado";
-        if (action === "despublicar") simulado.status = "rascunho";
-        if (action === "agendar") {
-          simulado.status = "agendado";
-          simulado.agendamento = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+        if (action === "editar") {
+          openExamEditorModal(simulado, groups, (updatedExam) => {
+            Storage.saveExam(updatedExam);
+            showToast(`${getExamTypeLabel(updatedExam.tipoExame)} "${updatedExam.nome}" atualizado com sucesso.`);
+            renderAdminView();
+          });
+          return;
         }
 
-        showToast(`Status do simulado "${simulado.nome}" atualizado para ${simulado.status}.`);
+        if (action === "publicar") {
+          Storage.updateExam(simulado.id, {
+            status: "publicado",
+            agendamento: null
+          });
+        }
+
+        if (action === "despublicar") {
+          Storage.updateExam(simulado.id, {
+            status: "rascunho"
+          });
+        }
+
+        if (action === "agendar") {
+          Storage.updateExam(simulado.id, {
+            status: "agendado",
+            agendamento: new Date(Date.now() + 86400000).toISOString().slice(0, 16)
+          });
+        }
+
+        if (action === "liberar-gabarito") {
+          Storage.updateExam(simulado.id, {
+            gabaritoModo: "manual",
+            gabaritoLiberado: true,
+            gabaritoLiberadoEm: new Date().toISOString(),
+            gabaritoAgendadoPara: null
+          });
+          showToast(`Gabarito de "${simulado.nome}" liberado com sucesso.`);
+          renderAdminView();
+          return;
+        }
+
+        const updatedExam = Storage.getExamById(simulado.id);
+        showToast(`Status de "${simulado.nome}" atualizado para ${updatedExam?.status || simulado.status}.`);
         renderAdminView();
       },
       onOpenStudentResult: (simuladoId, userId) => {
@@ -1988,7 +2408,7 @@ function renderCurrentSession() {
   renderStudentView();
 }
 
-SIMULADOS_DATA.forEach((simulado) => {
+Storage.getExams().forEach((simulado) => {
   simulado.questoes.forEach((questao, index) => {
     if (!questao.numero) {
       questao.numero = index + 1;

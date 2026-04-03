@@ -130,7 +130,7 @@ function buildAnalytics(users, simulados, historico, groups) {
     distribution,
     kpis: [
       { label: "Total de alunos", value: users.length, meta: "base cadastrada", tone: "primary" },
-      { label: "Taxa de conclusao", value: `${completionRate}%`, meta: "alunos com simulados concluidos", tone: "success" },
+      { label: "Taxa de conclusao", value: `${completionRate}%`, meta: "alunos com exames concluidos", tone: "success" },
       { label: "Acessos recentes", value: activeUsers, meta: "atividade nos ultimos 14 dias", tone: "warning" },
       { label: "Media de acerto", value: `${averageScore}%`, meta: "desempenho medio", tone: "neutral" }
     ],
@@ -217,10 +217,38 @@ function getStudentCardStyle(serie, groups) {
   return `--group-color: ${meta.color}; --group-color-soft: ${meta.softColor};`;
 }
 
+function getExamTypeLabel(tipoExame) {
+  return tipoExame === "prova" ? "Prova" : "Simulado";
+}
+
+function getExamAnswerKeyMeta(exam) {
+  if (exam.gabaritoLiberado) {
+    return {
+      label: "Gabarito liberado",
+      badge: "badge-success",
+      detail: exam.gabaritoLiberadoEm ? formatDateTime(exam.gabaritoLiberadoEm) : "Disponivel agora"
+    };
+  }
+
+  if (exam.gabaritoModo === "agendado" && exam.gabaritoAgendadoPara) {
+    return {
+      label: "Gabarito agendado",
+      badge: "badge-warning",
+      detail: formatDateTime(exam.gabaritoAgendadoPara)
+    };
+  }
+
+  return {
+    label: "Liberacao manual",
+    badge: "badge-muted",
+    detail: "Aguardando liberacao"
+  };
+}
+
 function renderSidebar(section) {
   const items = [
     { key: "home", label: "Home", icon: "home" },
-    { key: "simulados", label: "Simulados", icon: "simulados" },
+    { key: "exames", label: "Gerenciar exames", icon: "simulados" },
     { key: "ranking", label: "Ranking", icon: "ranking" },
     { key: "grupos", label: "Grupos", icon: "groups" },
     { key: "alunos", label: "Alunos", icon: "users" },
@@ -278,8 +306,8 @@ function renderSidebar(section) {
 function renderTopHeader(section, theme) {
   const titles = {
     home: { title: "Home admin", description: "Estatisticas, leitura analitica e atividade recente." },
-    simulados: { title: "Gerenciar simulados", description: "Criacao, importacao, publicacao e biblioteca de simulados." },
-    ranking: { title: "Ranking", description: "Ordenacao por simulado com modal de desempenho individual." },
+    exames: { title: "Gerenciar exames", description: "Criacao, edicao, publicacao e gabarito de provas e simulados." },
+    ranking: { title: "Ranking", description: "Ordenacao por exame com modal de desempenho individual." },
     grupos: { title: "Grupos de alunos", description: "Gerencie os grupos da plataforma e acompanhe a distribuicao da base." },
     alunos: { title: "Gerenciar alunos", description: "Permissao de email, suspensao, banimento, troca de senha e perfil." },
     certificados: { title: "Certificados", description: "Valide os certificados oficiais de participacao liberados para os alunos." },
@@ -296,7 +324,7 @@ function renderTopHeader(section, theme) {
         </button>
         <div class="admin-lte-search-shell">
           <span class="nav-item-icon nav-item-icon-svg">${renderIcon("search")}</span>
-          <input type="search" placeholder="Buscar aluno, simulado ou grupo">
+          <input type="search" placeholder="Buscar aluno, prova, simulado ou grupo">
         </div>
       </div>
 
@@ -346,13 +374,13 @@ function renderHero(analytics) {
         </div>
         <h2>Leitura executiva da operacao administrativa da plataforma.</h2>
         <p>
-          Acompanhe base de alunos, progresso de simulados, publicacoes e sinais de atividade recente em um unico painel.
+          Acompanhe base de alunos, progresso de provas e simulados, publicacoes e sinais de atividade recente em um unico painel.
         </p>
       </article>
 
       <section class="admin-executive-stats">
         <div class="admin-executive-stat">
-          <span>Simulados publicados</span>
+          <span>Exames publicados</span>
           <strong>${analytics.pipeline.published}</strong>
         </div>
         <div class="admin-executive-stat">
@@ -367,7 +395,7 @@ function renderHero(analytics) {
 
       <section class="admin-executive-list">
         <div class="admin-executive-item">Home com estatisticas e leitura analitica da plataforma.</div>
-        <div class="admin-executive-item">Simulados separados em pagina propria para operacao editorial.</div>
+        <div class="admin-executive-item">Provas e simulados centralizados em uma unica operacao editorial.</div>
         <div class="admin-executive-item">Ranking em pagina dedicada do admin, fora do painel do aluno.</div>
         <div class="admin-executive-item">Gestao de grupos com Fundamental I, Fundamental II, Ensino Medio e compatibilidade com conteudo legado.</div>
         <div class="admin-executive-item">Alunos em pagina independente com acoes administrativas e identificacao visual por grupo.</div>
@@ -483,7 +511,7 @@ function renderHomePage(analytics) {
           <div class="card-header admin-lte-card-header">
             <div>
               <h3>Painel de publicacao</h3>
-              <p class="muted-copy">Leitura rapida da esteira editorial de simulados.</p>
+              <p class="muted-copy">Leitura rapida da esteira editorial de provas e simulados.</p>
             </div>
             ${renderCardTools(["Editorial"])}
           </div>
@@ -521,7 +549,7 @@ function renderHomePage(analytics) {
                   (item) => `
                     <div class="admin-ga-table-row">
                       <div>
-                        <strong>${item.simuladoNome}</strong>
+                        <strong>${item.exameNome || item.simuladoNome}</strong>
                         <span>${formatDateTime(item.dataHora)}</span>
                       </div>
                       <div class="text-right">
@@ -535,7 +563,7 @@ function renderHomePage(analytics) {
             : `
                 <div class="empty-state">
                   <strong>Nenhum resultado registrado</strong>
-                  <p class="muted-copy">Os primeiros envios aparecerao aqui assim que os alunos concluirem simulados.</p>
+                  <p class="muted-copy">Os primeiros envios aparecerao aqui assim que os alunos concluirem provas ou simulados.</p>
                 </div>
               `}
         </div>
@@ -569,6 +597,7 @@ function renderSimuladosAdmin(simulados) {
               <div class="admin-ga-list-top">
                 <div>
                   <div class="tag-row">
+                    <span class="badge badge-primary">${getExamTypeLabel(simulado.tipoExame)}</span>
                     <span class="badge badge-primary">${simulado.turmas.map(formatSerieLabel).join(", ")}</span>
                     <span class="badge ${
                       simulado.status === "publicado"
@@ -577,16 +606,21 @@ function renderSimuladosAdmin(simulados) {
                           ? "badge-warning"
                           : "badge-muted"
                     }">${simulado.status}</span>
+                    <span class="badge ${getExamAnswerKeyMeta(simulado).badge}">${getExamAnswerKeyMeta(simulado).label}</span>
                   </div>
                   <h4 class="mt-4">${simulado.nome}</h4>
                   <p class="muted-copy mt-2">${simulado.questoes.length} questoes | ${formatDuration(simulado.tempo)}</p>
                 </div>
                 <div class="text-right">
-                  <span class="surface-eyebrow">${simulado.agendamento || "Sem agendamento"}</span>
+                  <span class="surface-eyebrow">${simulado.agendamento ? formatDateTime(simulado.agendamento) : "Sem agendamento"}</span>
+                  <p class="muted-copy mt-2">${getExamAnswerKeyMeta(simulado).detail}</p>
                 </div>
               </div>
 
               <div class="simulado-actions admin-lte-list-footer">
+                <button class="btn btn-primary btn-sm" type="button" data-simulado-action="editar" data-simulado-id="${simulado.id}">
+                  Editar
+                </button>
                 <button class="btn btn-secondary btn-sm" type="button" data-simulado-action="publicar" data-simulado-id="${simulado.id}">
                   Publicar
                 </button>
@@ -594,7 +628,10 @@ function renderSimuladosAdmin(simulados) {
                   Despublicar
                 </button>
                 <button class="btn btn-secondary btn-sm" type="button" data-simulado-action="agendar" data-simulado-id="${simulado.id}">
-                  Agendar
+                  Agendar publicacao
+                </button>
+                <button class="btn btn-secondary btn-sm" type="button" data-simulado-action="liberar-gabarito" data-simulado-id="${simulado.id}" ${simulado.gabaritoLiberado ? "disabled" : ""}>
+                  ${simulado.gabaritoLiberado ? "Gabarito liberado" : "Liberar gabarito"}
                 </button>
               </div>
             </article>
@@ -611,21 +648,28 @@ function renderSimuladosPage(simulados, groups) {
       <article class="admin-ga-surface admin-lte-card-surface">
         <div class="card-header admin-lte-card-header">
           <div>
-            <h3>Criar simulado</h3>
-            <p class="muted-copy">Dados do simulado, questoes objetivas, discursivas e publicacao.</p>
+            <h3>Criar exame</h3>
+            <p class="muted-copy">Defina se o conteudo sera prova ou simulado, configure publicacao e controle do gabarito.</p>
           </div>
           ${renderCardTools(["Formulario"])}
         </div>
         <form id="admin-create-simulado" class="card-body admin-stack">
           <div class="inline-fields">
             <div class="form-group">
-              <label class="form-label" for="simulado-nome">Nome do simulado</label>
+              <label class="form-label" for="simulado-nome">Nome do exame</label>
               <input id="simulado-nome" class="form-control" name="nome" required>
             </div>
             <div class="form-group">
               <label class="form-label" for="simulado-turma">Grupo / turma</label>
               <select id="simulado-turma" class="form-control form-select" name="turma" required>
                 ${groups.map((group) => `<option value="${group.code}">${group.name}</option>`).join("")}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="simulado-tipo-exame">Tipo de exame</label>
+              <select id="simulado-tipo-exame" class="form-control form-select" name="tipoExame" required>
+                <option value="simulado">Simulado</option>
+                <option value="prova">Prova</option>
               </select>
             </div>
           </div>
@@ -637,7 +681,29 @@ function renderSimuladosPage(simulados, groups) {
             </div>
             <div class="form-group">
               <label class="form-label" for="simulado-data">Agendar publicacao</label>
-              <input id="simulado-data" class="form-control" type="date" name="agendamento">
+              <input id="simulado-data" class="form-control" type="datetime-local" name="agendamento">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="simulado-gabarito-modo">Liberacao do gabarito</label>
+              <select id="simulado-gabarito-modo" class="form-control form-select" name="gabaritoModo">
+                <option value="manual">Manual</option>
+                <option value="agendado">Agendado</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="inline-fields">
+            <div class="form-group">
+              <label class="form-label" for="simulado-gabarito-data">Data da liberacao automatica do gabarito</label>
+              <input id="simulado-gabarito-data" class="form-control" type="datetime-local" name="gabaritoAgendadoPara">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="questao-disciplina">Disciplina da questao inicial</label>
+              <input id="questao-disciplina" class="form-control" name="disciplina" placeholder="Ex.: Historia, Geografia, Atualidades">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="questao-gabarito">Gabarito da questao inicial</label>
+              <input id="questao-gabarito" class="form-control" name="gabarito" maxlength="3" placeholder="Ex.: A">
             </div>
           </div>
 
@@ -654,14 +720,6 @@ function renderSimuladosPage(simulados, groups) {
               <label class="form-label" for="questao-imagem">Imagem</label>
               <input id="questao-imagem" class="form-control" name="imagem" placeholder="URL da imagem ou referencia de upload">
             </div>
-            <div class="form-group">
-              <label class="form-label" for="questao-tipo">Formato de multipla escolha</label>
-              <select id="questao-tipo" class="form-control form-select" name="tipo">
-                <option value="A-E">A ate E</option>
-                <option value="A-D">A ate D com E opcional</option>
-                <option value="C-E">C ou E</option>
-              </select>
-            </div>
           </div>
 
           <div class="form-group">
@@ -670,11 +728,11 @@ function renderSimuladosPage(simulados, groups) {
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="questao-discursiva">Questao discursiva</label>
-            <textarea id="questao-discursiva" class="form-control" name="discursiva" placeholder="Bloco discursivo da 2a fase, com comando e orientacoes."></textarea>
+            <label class="form-label" for="questao-comentario">Comentario pedagogico da questao inicial</label>
+            <textarea id="questao-comentario" class="form-control" name="comentario" placeholder="Explique a resposta correta e a logica do item."></textarea>
           </div>
 
-          <button class="btn btn-primary" type="submit">Criar simulado</button>
+          <button class="btn btn-primary" type="submit">Criar exame</button>
         </form>
       </article>
 
@@ -702,13 +760,13 @@ function renderSimuladosPage(simulados, groups) {
     </section>
 
     <section class="admin-ga-surface admin-lte-card-surface mt-6">
-      <div class="card-header admin-lte-card-header">
-        <div>
-          <h3>Biblioteca de simulados</h3>
-          <p class="muted-copy">Controle de publicacao, despublicacao e agendamento.</p>
+        <div class="card-header admin-lte-card-header">
+          <div>
+            <h3>Biblioteca de exames</h3>
+            <p class="muted-copy">Controle de provas e simulados, com edicao, publicacao e liberacao de gabarito.</p>
+          </div>
+          ${renderCardTools(["Biblioteca"])}
         </div>
-        ${renderCardTools(["Biblioteca"])}
-      </div>
       <div class="card-body">
         ${renderSimuladosAdmin(simulados)}
       </div>
@@ -721,20 +779,20 @@ function renderRankingPage(simulados, rankingSimulado, ranking) {
     <section class="admin-ga-surface admin-lte-card-surface">
       <div class="card-header admin-lte-card-header">
         <div>
-          <h3>Ranking por simulado</h3>
-          <p class="muted-copy">Selecione um simulado e abra o desempenho individual em modal.</p>
+          <h3>Ranking por exame</h3>
+          <p class="muted-copy">Selecione uma prova ou simulado e abra o desempenho individual em modal.</p>
         </div>
         ${renderCardTools(["Classificacao"])}
       </div>
       <div class="card-body admin-stack">
         <div class="form-group">
-          <label class="form-label" for="ranking-simulado">Simulado</label>
+          <label class="form-label" for="ranking-simulado">Exame</label>
           <select id="ranking-simulado" class="form-control form-select">
             ${simulados
               .map(
                 (simulado) => `
                   <option value="${simulado.id}" ${rankingSimulado?.id === simulado.id ? "selected" : ""}>
-                    ${simulado.nome}
+                    ${getExamTypeLabel(simulado.tipoExame)} - ${simulado.nome}
                   </option>
                 `
               )
@@ -746,8 +804,8 @@ function renderRankingPage(simulados, rankingSimulado, ranking) {
           !rankingSimulado
             ? `
               <div class="empty-state">
-                <strong>Nenhum simulado selecionado</strong>
-                <p class="muted-copy">Escolha um simulado para abrir o ranking.</p>
+                <strong>Nenhum exame selecionado</strong>
+                <p class="muted-copy">Escolha uma prova ou um simulado para abrir o ranking.</p>
               </div>
             `
             : !ranking.length
@@ -1252,7 +1310,7 @@ export function renderAdminDashboard(root, data, handlers) {
 
   const sectionContent = {
     home: renderHomePage(analytics),
-    simulados: renderSimuladosPage(simulados, activeGroups.length ? activeGroups : groups),
+    exames: renderSimuladosPage(simulados, activeGroups.length ? activeGroups : groups),
     ranking: renderRankingPage(simulados, rankingSimulado, ranking),
     grupos: renderGroupsPage(groups, users),
     alunos: renderStudentsPage(users, groups),

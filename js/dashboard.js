@@ -170,7 +170,7 @@ function renderHome({ user, simulados, resultados, notifications }) {
           <strong class="student-metric-inline">${stats.completionPercent}%</strong>
         </div>
         <p class="student-copy">
-          ${stats.completedCount} de ${stats.total || 0} simulados concluidos para ${formatSerieLabel(user.serie)}.
+          ${stats.completedCount} de ${stats.total || 0} exames concluidos para ${formatSerieLabel(user.serie)}.
         </p>
         ${renderProgressBar(stats.completionPercent)}
         <div class="student-mini-metrics">
@@ -185,30 +185,30 @@ function renderHome({ user, simulados, resultados, notifications }) {
         </div>
       </article>
 
-      <article class="student-card student-summary-card" data-searchable data-search="${escapeAttribute(latest?.simuladoNome || "ultimo simulado")}">
+      <article class="student-card student-summary-card" data-searchable data-search="${escapeAttribute(latest?.exameNome || latest?.simuladoNome || "ultimo exame")}">
         <div class="student-card-head">
           <div>
-            <span class="student-eyebrow">Ultimo simulado</span>
-            <h3>${latest ? latest.simuladoNome : "Nenhum simulado finalizado"}</h3>
+            <span class="student-eyebrow">Ultimo exame</span>
+            <h3>${latest ? latest.exameNome || latest.simuladoNome : "Nenhum exame finalizado"}</h3>
           </div>
         </div>
         <p class="student-copy">
-          ${latest ? `${latest.percentual}% de acerto em ${formatDateTime(latest.dataHora)}.` : "Quando voce concluir a primeira prova, o resumo aparecera aqui."}
+          ${latest ? `${latest.percentual}% de acerto em ${formatDateTime(latest.dataHora)}.` : "Quando voce concluir o primeiro exame, o resumo aparecera aqui."}
         </p>
         ${latest ? `<button class="btn btn-secondary mt-4" type="button" data-view-result="${latest.simuladoId}">Ver detalhes</button>` : ""}
       </article>
 
-      <article class="student-card student-summary-card" data-searchable data-search="${escapeAttribute(nextSimulado?.nome || "proximo simulado")}">
+      <article class="student-card student-summary-card" data-searchable data-search="${escapeAttribute(nextSimulado?.nome || "proximo exame")}">
         <div class="student-card-head">
           <div>
-            <span class="student-eyebrow">Proximo simulado</span>
-            <h3>${nextSimulado ? nextSimulado.nome : "Nenhum simulado disponivel"}</h3>
+            <span class="student-eyebrow">Proximo exame</span>
+            <h3>${nextSimulado ? nextSimulado.nome : "Nenhum exame disponivel"}</h3>
           </div>
         </div>
         <p class="student-copy">
-          ${nextSimulado ? `${nextSimulado.questoes.length} questoes | ${formatDuration(nextSimulado.tempo)} | visualizacao unica e por rolagem.` : "A equipe ainda nao publicou uma nova prova para o seu grupo."}
+          ${nextSimulado ? `${nextSimulado.questoes.length} questoes | ${formatDuration(nextSimulado.tempo)} | ${nextSimulado.tipoExame === "prova" ? "prova oficial" : "simulado de treino"}.` : "A equipe ainda nao publicou um novo exame para o seu grupo."}
         </p>
-        ${nextSimulado ? `<button class="btn btn-primary mt-4" type="button" data-start-simulado="${nextSimulado.id}">Iniciar simulado</button>` : ""}
+        ${nextSimulado ? `<button class="btn btn-primary mt-4" type="button" data-start-simulado="${nextSimulado.id}">Iniciar ${nextSimulado.tipoExame === "prova" ? "prova" : "simulado"}</button>` : ""}
       </article>
 
       <article class="student-card student-summary-card" data-searchable data-search="${escapeAttribute(topNotice?.titulo || "avisos importantes")}">
@@ -268,90 +268,183 @@ function renderBiblioteca(ebooks) {
   `;
 }
 
-function renderSimulados(simulados, resultados, user) {
-  if (!simulados.length) {
-    return `
-      <div class="empty-state student-empty">
-        <strong>Nenhum simulado disponivel</strong>
-        <p class="muted-copy">Assim que novas provas forem publicadas para seu grupo, elas aparecerao aqui.</p>
-      </div>
-    `;
-  }
-
-  const availableFilters = ["Todos", ...new Set(simulados.flatMap((simulado) => simulado.turmas))];
+function renderExamPage(exams, resultados, user, resultadoSelecionado, examType) {
+  const typeLabel = examType === "prova" ? "provas" : "simulados";
+  const singularLabel = examType === "prova" ? "prova" : "simulado";
+  const filteredExams = exams.filter((exam) => (exam.tipoExame || "simulado") === examType);
+  const completed = resultados
+    .filter((item) => item && (item.tipoExame || item.exam?.tipoExame || "simulado") === examType)
+    .sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora));
+  const selectedResult = completed.find((item) => item.simuladoId === resultadoSelecionado?.simuladoId) || completed[0] || null;
+  const availableFilters = filteredExams.length ? ["Todos", ...new Set(filteredExams.flatMap((exam) => exam.turmas))] : ["Todos"];
+  const averageScore = completed.length
+    ? Math.round(completed.reduce((sum, item) => sum + item.percentual, 0) / completed.length)
+    : 0;
 
   return `
     <section class="student-simulado-page">
-      <div class="student-filter-bar">
-        <span class="student-filter-label">Filtrar por nivel</span>
-        <div class="student-filter-pills">
-          ${availableFilters
-            .map(
-              (filter, index) => `
-                <button class="student-filter-pill ${index === 0 ? "active" : ""}" type="button" data-simulado-filter="${filter}">
-                  ${filter === "Todos" ? "Todos" : formatSerieLabel(filter)}
-                </button>
-              `
-            )
-            .join("")}
+      <section class="student-simulado-section">
+        <div class="student-section-heading">
+          <div>
+            <span class="student-eyebrow">${examType === "prova" ? "Provas disponiveis" : "Simulados disponiveis"}</span>
+            <h3>${examType === "prova" ? "Provas liberadas para o seu grupo" : "Simulados liberados para o seu grupo"}</h3>
+          </div>
+          <p class="student-copy">Escolha um ${singularLabel} para iniciar agora ou revisar os que ja foram concluidos logo abaixo.</p>
         </div>
-      </div>
 
-      <section class="student-simulado-grid">
-        ${simulados
-          .map((simulado) => {
-            const resultado = resultados.find((item) => item?.simuladoId === simulado.id);
-            const status = getSimuladoStatus(simulado, user, resultado);
-            return `
-              <article
-                class="student-card student-simulado-card"
-                data-searchable
-                data-levels="${escapeAttribute(simulado.turmas.join(","))}"
-                data-search="${escapeAttribute(`${simulado.nome} ${simulado.turmas.join(" ")} ${status.label}`)}"
-              >
+        ${
+          filteredExams.length
+            ? `
+              <div class="student-filter-bar">
+                <span class="student-filter-label">Filtrar por nivel</span>
+                <div class="student-filter-pills">
+                  ${availableFilters
+                    .map(
+                      (filter, index) => `
+                        <button class="student-filter-pill ${index === 0 ? "active" : ""}" type="button" data-simulado-filter="${filter}">
+                          ${filter === "Todos" ? "Todos" : formatSerieLabel(filter)}
+                        </button>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </div>
+
+              <section class="student-simulado-grid">
+                ${filteredExams
+                  .map((exam) => {
+                    const resultado = completed.find((item) => item?.simuladoId === exam.id) || resultados.find((item) => item?.simuladoId === exam.id);
+                    const status = getSimuladoStatus(exam, user, resultado);
+                    return `
+                      <article
+                        class="student-card student-simulado-card"
+                        data-searchable
+                        data-levels="${escapeAttribute(exam.turmas.join(","))}"
+                        data-search="${escapeAttribute(`${exam.nome} ${exam.turmas.join(" ")} ${status.label}`)}"
+                      >
+                        <div class="student-card-head">
+                          <div>
+                            <div class="student-chip-row">
+                              <span class="student-chip">${exam.turmas.map(formatSerieLabel).join(" / ")}</span>
+                              <span class="student-chip">${examType === "prova" ? "Prova" : "Simulado"}</span>
+                              <span class="student-status-badge student-status-${status.tone}">${status.label}</span>
+                            </div>
+                            <h3>${exam.nome}</h3>
+                          </div>
+                          <div class="student-score-pill">
+                            <strong>${resultado ? `${resultado.percentual}%` : "--"}</strong>
+                            <span>${resultado ? "acerto" : "status"}</span>
+                          </div>
+                        </div>
+
+                        <div class="student-inline-meta">
+                          <span>${exam.questoes.length} questoes</span>
+                          <span>${formatDuration(exam.tempo)}</span>
+                          <span>${exam.status}</span>
+                        </div>
+
+                        <p class="student-copy">
+                          ${examType === "prova"
+                            ? "Prova oficial com controle de gabarito pela equipe OBDIP."
+                            : "Simulado de treino com questoes objetivas, imagens e acompanhamento de desempenho."}
+                        </p>
+
+                        <div class="student-action-row">
+                          <button class="btn btn-primary" type="button" data-start-simulado="${exam.id}">Iniciar ${singularLabel}</button>
+                          <button class="btn btn-secondary" type="button" data-view-result="${exam.id}" ${resultado ? "" : "disabled"}>Ver resultado</button>
+                        </div>
+                      </article>
+                    `;
+                  })
+                  .join("")}
+              </section>
+            `
+            : `
+              <div class="empty-state student-empty">
+                <strong>Nenhum ${singularLabel} disponivel</strong>
+                <p class="muted-copy">Assim que novos ${typeLabel} forem publicados para seu grupo, eles aparecerao aqui.</p>
+              </div>
+            `
+        }
+      </section>
+
+      <section class="student-simulado-section student-simulado-results-section">
+        <div class="student-section-heading">
+          <div>
+            <span class="student-eyebrow">Resultado dos ${typeLabel}</span>
+            <h3>Desempenho consolidado e consulta por ${singularLabel}</h3>
+          </div>
+          <p class="student-copy">Veja sua media geral e selecione um ${singularLabel} especifico para analisar o resultado completo.</p>
+        </div>
+
+        ${
+          completed.length
+            ? `
+              <div class="student-results-summary-grid">
+                <article class="student-card student-results-summary-card">
+                  <span class="student-eyebrow">Media geral</span>
+                  <strong class="student-metric-inline">${averageScore}%</strong>
+                  <p class="student-copy">Percentual medio considerando todos os ${typeLabel} realizados.</p>
+                </article>
+                <article class="student-card student-results-summary-card">
+                  <span class="student-eyebrow">Realizados</span>
+                  <strong class="student-metric-inline">${completed.length}</strong>
+                  <p class="student-copy">${examType === "prova" ? "Prova(s)" : "Simulado(s)"} concluidos e disponiveis para consulta detalhada.</p>
+                </article>
+                <article class="student-card student-results-summary-card">
+                  <span class="student-eyebrow">Melhor resultado</span>
+                  <strong class="student-metric-inline">${Math.max(...completed.map((item) => item.percentual))}%</strong>
+                  <p class="student-copy">Seu maior percentual de acerto ate o momento.</p>
+                </article>
+              </div>
+
+              <div class="student-results-selector-card student-card">
                 <div class="student-card-head">
                   <div>
-                    <div class="student-chip-row">
-                      <span class="student-chip">${simulado.turmas.map(formatSerieLabel).join(" / ")}</span>
-                      <span class="student-status-badge student-status-${status.tone}">${status.label}</span>
-                    </div>
-                    <h3>${simulado.nome}</h3>
+                    <span class="student-eyebrow">Escolher ${singularLabel}</span>
+                    <h3>Selecione qual resultado deseja analisar</h3>
                   </div>
                   <div class="student-score-pill">
-                    <strong>${resultado ? `${resultado.percentual}%` : "--"}</strong>
-                    <span>${resultado ? "acerto" : "status"}</span>
+                    <strong>${selectedResult?.percentual || "--"}%</strong>
+                    <span>${selectedResult ? "selecionado" : "aguardando"}</span>
                   </div>
                 </div>
-
-                <div class="student-inline-meta">
-                  <span>${simulado.questoes.length} questoes</span>
-                  <span>${formatDuration(simulado.tempo)}</span>
-                  <span>${simulado.status}</span>
+                <div class="form-group mt-4">
+                  <label class="form-label" for="student-result-select">${examType === "prova" ? "Prova" : "Simulado"}</label>
+                  <select id="student-result-select" class="form-control form-select" data-result-select>
+                    ${completed
+                      .map(
+                        (resultado) => `
+                          <option value="${resultado.simuladoId}" ${selectedResult?.simuladoId === resultado.simuladoId ? "selected" : ""}>
+                            ${resultado.exameNome || resultado.simuladoNome} - ${resultado.percentual}% - ${formatDateTime(resultado.dataHora)}
+                          </option>
+                        `
+                      )
+                      .join("")}
+                  </select>
                 </div>
+              </div>
 
-                <p class="student-copy">
-                  Prova com questoes objetivas, imagens, modo por rolagem continua e visualizacao unica com escadinha lateral.
-                </p>
-
-                <div class="student-action-row">
-                  <button class="btn btn-primary" type="button" data-start-simulado="${simulado.id}">Iniciar simulado</button>
-                  <button class="btn btn-secondary" type="button" data-view-result="${simulado.id}" ${resultado ? "" : "disabled"}>Ver resultado</button>
-                </div>
-              </article>
-            `;
-          })
-          .join("")}
+              ${renderResultadoDetail(selectedResult, examType)}
+            `
+            : `
+              <div class="empty-state student-empty">
+                <strong>Nenhum resultado disponivel</strong>
+                <p class="muted-copy">Finalize seu primeiro ${singularLabel} para liberar esta area.</p>
+              </div>
+            `
+        }
       </section>
     </section>
   `;
 }
 
-function renderReviewOptions(questao) {
+function renderReviewOptions(questao, showAnswerKey = true) {
   return `
     <div class="opcoes-lista review-opcoes">
       ${questao.opcoes
         .map((opcao) => {
-          const isCorrect = opcao.letra === questao.gabarito;
+          const isCorrect = showAnswerKey && opcao.letra === questao.gabarito;
           const isSelected = opcao.letra === questao.escolha;
           const classes = [
             "opcao-item",
@@ -380,8 +473,9 @@ function renderReviewOptions(questao) {
   `;
 }
 
-function renderResultadoDetail(resultado) {
+function renderResultadoDetail(resultado, examType) {
   if (!resultado) return "";
+  const answerKeyReleased = Boolean(resultado.gabaritoLiberado);
 
   return `
     <section class="student-results-detail">
@@ -389,7 +483,7 @@ function renderResultadoDetail(resultado) {
         <div class="student-card-head">
           <div>
             <span class="student-eyebrow">Detalhes do resultado</span>
-            <h3>${resultado.simuladoNome}</h3>
+            <h3>${resultado.exameNome || resultado.simuladoNome}</h3>
           </div>
           <strong class="student-metric-inline">${resultado.percentual}%</strong>
         </div>
@@ -410,82 +504,48 @@ function renderResultadoDetail(resultado) {
         </div>
       </article>
 
-      <section class="review-list">
-        ${resultado.detalhes
-          .map(
-            (questao) => `
-              <article class="review-item review-item-modern">
-                <header>
-                  <div>
-                    <span class="badge ${questao.acertou ? "badge-success" : "badge-error"}">Questao ${questao.numero}</span>
-                    <h4 class="mt-4">${questao.disciplina}</h4>
-                  </div>
-                  <div class="tag-row">
-                    <span class="option-badge ${questao.acertou ? "correct" : "wrong"}">Sua resposta: ${questao.escolha || "Em branco"}</span>
-                    <span class="option-badge correct">Gabarito: ${questao.gabarito}</span>
-                  </div>
-                </header>
-                <div class="review-item-body">
-                  <div class="questao-enunciado">${questao.enunciado}</div>
-                  ${renderReviewOptions(questao)}
-                  <div class="questao-comentario">
-                    <h6>Comentario pedagogico</h6>
-                    <p>${questao.comentario}</p>
-                  </div>
-                </div>
-              </article>
-            `
-          )
-          .join("")}
-      </section>
-    </section>
-  `;
-}
-
-function renderResultados(resultados, resultadoSelecionado) {
-  const completed = resultados.filter(Boolean).sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora));
-
-  if (!completed.length) {
-    return `
-      <div class="empty-state student-empty">
-        <strong>Nenhum resultado disponivel</strong>
-        <p class="muted-copy">Finalize seu primeiro simulado para liberar esta pagina.</p>
-      </div>
-    `;
-  }
-
-  return `
-    <section class="student-results-page">
-      <section class="student-results-list">
-        ${completed
-          .map(
-            (resultado) => `
-              <article
-                class="student-card student-result-card ${resultadoSelecionado?.simuladoId === resultado.simuladoId ? "selected" : ""}"
-                data-searchable
-                data-search="${escapeAttribute(`${resultado.simuladoNome} ${resultado.percentual}`)}"
-              >
-                <div class="student-result-main">
-                  <div>
-                    <span class="student-eyebrow">Simulado concluido</span>
-                    <h3>${resultado.simuladoNome}</h3>
-                    <p class="student-copy">${formatDateTime(resultado.dataHora)}</p>
-                  </div>
-                  <div class="student-result-score">
-                    <strong>${resultado.percentual}%</strong>
-                    <span>${resultado.acertos}/${resultado.total}</span>
-                  </div>
-                </div>
-                <button class="btn btn-secondary mt-4" type="button" data-view-result="${resultado.simuladoId}">
-                  Ver detalhes
-                </button>
-              </article>
-            `
-          )
-          .join("")}
-      </section>
-
-      ${renderResultadoDetail(resultadoSelecionado || completed[0])}
+      ${
+        !answerKeyReleased
+          ? `
+            <article class="student-card student-results-summary-card">
+              <span class="student-eyebrow">Gabarito indisponivel</span>
+              <h3>${examType === "prova" ? "A prova ainda nao teve o gabarito liberado." : "O simulado ainda nao teve o gabarito liberado."}</h3>
+              <p class="student-copy">
+                Seu resultado geral ja foi registrado, mas o detalhamento por questao, comentarios e gabarito so aparecem quando a equipe OBDIP liberar essa visualizacao.
+              </p>
+            </article>
+          `
+          : `
+            <section class="review-list">
+              ${resultado.detalhes
+                .map(
+                  (questao) => `
+                    <article class="review-item review-item-modern">
+                      <header>
+                        <div>
+                          <span class="badge ${questao.acertou ? "badge-success" : "badge-error"}">Questao ${questao.numero}</span>
+                          <h4 class="mt-4">${questao.disciplina}</h4>
+                        </div>
+                        <div class="tag-row">
+                          <span class="option-badge ${questao.acertou ? "correct" : "wrong"}">Sua resposta: ${questao.escolha || "Em branco"}</span>
+                          <span class="option-badge correct">Gabarito: ${questao.gabarito}</span>
+                        </div>
+                      </header>
+                      <div class="review-item-body">
+                        <div class="questao-enunciado">${questao.enunciado}</div>
+                        ${renderReviewOptions(questao, true)}
+                        <div class="questao-comentario">
+                          <h6>Comentario pedagogico</h6>
+                          <p>${questao.comentario}</p>
+                        </div>
+                      </div>
+                    </article>
+                  `
+                )
+                .join("")}
+            </section>
+          `
+      }
     </section>
   `;
 }
@@ -889,7 +949,9 @@ export function renderStudentDashboard(root, data, handlers) {
     section,
     documents = [],
     ebooks,
+    exames = [],
     simulados,
+    provas = [],
     resultados,
     resultadoSelecionado,
     notifications,
@@ -900,8 +962,8 @@ export function renderStudentDashboard(root, data, handlers) {
   const pageTitles = {
     home: "Home",
     biblioteca: "E-books",
+    provas: "Provas",
     simulados: "Simulados",
-    desempenho: "Resultados",
     certificados: "Certificados",
     documentos: "Documentos",
     notificacoes: "Notificacoes",
@@ -912,8 +974,8 @@ export function renderStudentDashboard(root, data, handlers) {
   const pageDescriptions = {
     home: "Resumo rapido da sua jornada, progresso e proximas acoes.",
     biblioteca: "Materiais organizados em PDF para estudo e revisao.",
-    simulados: "Provas disponiveis com status, filtros e acesso imediato.",
-    desempenho: "Historico de simulados concluidos e analise detalhada das questoes.",
+    provas: "Provas disponiveis e resultados liberados conforme o gabarito oficial.",
+    simulados: "Simulados disponiveis e resultados consolidados em uma unica pagina.",
     certificados: "Certificado oficial de participacao pronto para visualizacao e impressao.",
     documentos: "Acompanhe aprovacoes, recusas e reenvio dos PDFs da sua matricula.",
     notificacoes: "Feed de avisos e comunicacoes da plataforma.",
@@ -922,10 +984,10 @@ export function renderStudentDashboard(root, data, handlers) {
   };
 
   const sectionContent = {
-    home: renderHome({ user, simulados, resultados, notifications }),
+    home: renderHome({ user, simulados: exames, resultados, notifications }),
     biblioteca: renderBiblioteca(ebooks),
-    simulados: renderSimulados(simulados, resultados, user),
-    desempenho: renderResultados(resultados, resultadoSelecionado),
+    provas: renderExamPage(exames, resultados, user, resultadoSelecionado, "prova"),
+    simulados: renderExamPage(exames, resultados, user, resultadoSelecionado, "simulado"),
     certificados: renderCertificates(certificates),
     documentos: renderStudentDocuments(documents),
     notificacoes: renderNotifications(notifications),
@@ -936,8 +998,8 @@ export function renderStudentDashboard(root, data, handlers) {
   const navItems = [
     { key: "home", label: "Home", icon: "home" },
     { key: "biblioteca", label: "E-books", icon: "books" },
+    { key: "provas", label: "Provas", icon: "simulados", badge: provas.length },
     { key: "simulados", label: "Simulados", icon: "simulados", badge: simulados.length },
-    { key: "desempenho", label: "Resultados", icon: "resultados" },
     { key: "certificados", label: "Certificados", icon: "certificados" },
     { key: "documentos", label: "Documentos", icon: "certificados", badge: documents.filter((item) => item.status === "reprovado").length || null },
     { key: "notificacoes", label: "Notificacoes", icon: "notifications", badge: unreadNotificationCount || null },
@@ -992,7 +1054,7 @@ export function renderStudentDashboard(root, data, handlers) {
             </button>
             <div class="student-search">
               <span class="student-search-icon nav-item-icon-svg">${renderIcon("search")}</span>
-              <input type="search" placeholder="Buscar materiais, simulados, resultados..." data-student-search>
+              <input type="search" placeholder="Buscar materiais, provas, simulados, resultados..." data-student-search>
             </div>
           </div>
 
@@ -1078,6 +1140,10 @@ export function renderStudentDashboard(root, data, handlers) {
 
   root.querySelectorAll("[data-view-result]").forEach((button) => {
     button.addEventListener("click", () => handlers.onViewResult(button.dataset.viewResult));
+  });
+
+  root.querySelector("[data-result-select]")?.addEventListener("change", (event) => {
+    handlers.onViewResult(event.target.value);
   });
 
   root.querySelectorAll("[data-ebook-download]").forEach((button) => {
